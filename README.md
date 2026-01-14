@@ -29,7 +29,7 @@ Automated backup solution for [mailcow-dockerized](https://mailcow.email/) to He
 
 ```bash
 cd /opt
-git clone https://github.com/yourusername/mailcow-cold-standby.git
+git clone https://github.com/Paul1404/mailcow-cold-standby.git
 cd mailcow-cold-standby
 ```
 
