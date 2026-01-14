@@ -185,19 +185,15 @@ check_disk_space() {
     
     # Calculate mailcow volumes size
     local volumes_size=0
+    
     if command -v docker &> /dev/null; then
-        # Get size of all mailcow volumes in bytes
-        volumes_size=$(docker system df -v 2>/dev/null | grep -i volume | awk '{print $3}' | grep -E '^[0-9.]+[KMGT]?B?$' | sed 's/B$//' | awk '
-            {
-                n = $1;
-                if ($1 ~ /K/) { n = substr($1, 1, length($1)-1) * 1024 }
-                else if ($1 ~ /M/) { n = substr($1, 1, length($1)-1) * 1024 * 1024 }
-                else if ($1 ~ /G/) { n = substr($1, 1, length($1)-1) * 1024 * 1024 * 1024 }
-                else if ($1 ~ /T/) { n = substr($1, 1, length($1)-1) * 1024 * 1024 * 1024 * 1024 }
-                sum += n
-            }
-            END { print int(sum) }
-        ')
+        # Try to get Docker volumes size - use a simpler, more robust approach
+        local docker_root=$(docker info 2>/dev/null | grep "Docker Root Dir" | awk '{print $NF}')
+        
+        if [[ -n "$docker_root" ]] && [[ -d "$docker_root/volumes" ]]; then
+            # Calculate size of Docker volumes directory
+            volumes_size=$(du -sb "$docker_root/volumes" 2>/dev/null | awk '{print $1}' || echo "0")
+        fi
         
         if [[ -z "$volumes_size" ]] || [[ "$volumes_size" -eq 0 ]]; then
             log_warn "Could not determine Docker volumes size, estimating 10GB"
@@ -208,21 +204,28 @@ check_disk_space() {
         volumes_size=$((10 * 1024 * 1024 * 1024))
     fi
     
-    # Calculate required space (50% of volumes size + 1GB buffer)
-    local required_space=$(( volumes_size / 2 + 1024 * 1024 * 1024 ))
+    # Calculate required space (50% of volumes size + 2GB buffer)
+    local required_space=$(( volumes_size / 2 + 2 * 1024 * 1024 * 1024 ))
     
-    # Get available space on temp directory filesystem
-    local temp_dir_parent=$(dirname "$TEMP_BACKUP_DIR")
-    local available_space=$(df "$temp_dir_parent" | tail -1 | awk '{print $4 * 1024}')
+    # Ensure temp directory exists for df check
+    mkdir -p "$(dirname "$TEMP_BACKUP_DIR")"
     
-    log_info "Docker volumes size: $(numfmt --to=iec-i --suffix=B $volumes_size)"
-    log_info "Required free space: $(numfmt --to=iec-i --suffix=B $required_space)"
-    log_info "Available space: $(numfmt --to=iec-i --suffix=B $available_space)"
+    # Get available space on temp directory filesystem (in KB, convert to bytes)
+    local available_space=$(df -k "$(dirname "$TEMP_BACKUP_DIR")" 2>/dev/null | tail -1 | awk '{print $4 * 1024}')
+    
+    if [[ -z "$available_space" ]] || [[ "$available_space" -eq 0 ]]; then
+        log_error "Could not determine available disk space"
+        exit 1
+    fi
+    
+    log_info "Docker volumes size: $(numfmt --to=iec-i --suffix=B $volumes_size 2>/dev/null || echo "${volumes_size} bytes")"
+    log_info "Required free space: $(numfmt --to=iec-i --suffix=B $required_space 2>/dev/null || echo "${required_space} bytes")"
+    log_info "Available space: $(numfmt --to=iec-i --suffix=B $available_space 2>/dev/null || echo "${available_space} bytes")"
     
     if [[ $available_space -lt $required_space ]]; then
         log_error "Insufficient disk space!"
-        log_error "Required: $(numfmt --to=iec-i --suffix=B $required_space)"
-        log_error "Available: $(numfmt --to=iec-i --suffix=B $available_space)"
+        log_error "Required: $(numfmt --to=iec-i --suffix=B $required_space 2>/dev/null || echo "${required_space} bytes")"
+        log_error "Available: $(numfmt --to=iec-i --suffix=B $available_space 2>/dev/null || echo "${available_space} bytes")"
         exit 1
     fi
     
