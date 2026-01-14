@@ -269,7 +269,13 @@ install_scripts() {
 }
 
 ###############################################################################
-# InstGet absolute path to repo
+# Install Systemd Units
+###############################################################################
+
+install_systemd_units() {
+    print_info "Installing systemd units..."
+    
+    # Get absolute path to repo
     local repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     
     # Copy (not symlink) systemd units as systemd expects actual files
@@ -277,13 +283,7 @@ install_scripts() {
     chmod 644 "$SYSTEMD_DIR/mailcow-backup.service"
     print_info "Installed: $SYSTEMD_DIR/mailcow-backup.service"
     
-    cp -f "$repo_dir/systemd/mailcow-backup.timer"
-    cp systemd/mailcow-backup.service "$SYSTEMD_DIR/mailcow-backup.service"
-    chmod 644 "$SYSTEMD_DIR/mailcow-backup.service"
-    print_info "Installed: $SYSTEMD_DIR/mailcow-backup.service"
-    
-    # Install timer
-    cp systemd/mailcow-backup.timer "$SYSTEMD_DIR/mailcow-backup.timer"
+    cp -f "$repo_dir/systemd/mailcow-backup.timer" "$SYSTEMD_DIR/mailcow-backup.timer"
     chmod 644 "$SYSTEMD_DIR/mailcow-backup.timer"
     print_info "Installed: $SYSTEMD_DIR/mailcow-backup.timer"
     
