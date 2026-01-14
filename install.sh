@@ -136,12 +136,12 @@ install_dependencies() {
         print_info "rsync found ✓"
     fi
     
-    # Check xxhash
-    if ! command -v xxh64sum &> /dev/null && ! command -v xxhsum &> /dev/null; then
-        print_warn "xxHash not found, will install"
-        packages_to_install+=("xxhash")
+    # Check sha256sum (should be available on all modern Linux systems)
+    if ! command -v sha256sum &> /dev/null; then
+        print_error "sha256sum not found. This should be available by default."
+        exit 1
     else
-        print_info "xxHash found ✓"
+        print_info "sha256sum found ✓"
     fi
     
     # Install missing packages

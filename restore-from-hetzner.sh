@@ -274,7 +274,7 @@ download_backup() {
 verify_backup() {
     log_info "Verifying backup integrity..."
     
-    local checksum_file="${RESTORE_PATH}/checksums.xxh64"
+    local checksum_file="${RESTORE_PATH}/checksums.sha256"
     
     if [[ ! -f "$checksum_file" ]]; then
         log_warn "Checksum file not found, skipping verification"
@@ -284,22 +284,15 @@ verify_backup() {
     cd "$RESTORE_PATH" || exit 1
     
     # Verify checksums
-    if command -v xxh64sum &> /dev/null; then
-        if xxh64sum -c "$checksum_file" 2>&1 | tee -a "$RESTORE_LOG"; then
-            log_info "Backup integrity verified successfully"
-        else
-            log_error "Backup integrity check failed!"
-            exit 1
-        fi
-    elif command -v xxhsum &> /dev/null; then
-        if xxhsum -H64 -c "$checksum_file" 2>&1 | tee -a "$RESTORE_LOG"; then
+    if command -v sha256sum &> /dev/null; then
+        if sha256sum -c "$checksum_file" 2>&1 | tee -a "$RESTORE_LOG"; then
             log_info "Backup integrity verified successfully"
         else
             log_error "Backup integrity check failed!"
             exit 1
         fi
     else
-        log_warn "xxHash utility not found, skipping integrity check"
+        log_warn "sha256sum utility not found, skipping integrity check"
     fi
 }
 

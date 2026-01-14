@@ -5,7 +5,7 @@
 # 
 # This script automates the backup of mailcow-dockerized to a Hetzner storage
 # box using rsync over SSH. It includes disk space checks, lock file protection,
-# and integrity verification with xxHash.
+# and integrity verification with SHA-256 checksums.
 #
 # Author: Paul Dresch
 # License: MIT
@@ -282,17 +282,15 @@ perform_backup() {
 generate_checksums() {
     log_info "Generating checksums for backup verification..."
     
-    local checksum_file="${BACKUP_DIR}/checksums.xxh64"
+    local checksum_file="${BACKUP_DIR}/checksums.sha256"
     
-    # Generate xxHash checksums for all files in backup
+    # Generate SHA-256 checksums for all files in backup
     cd "$BACKUP_DIR" || exit 1
     
-    if command -v xxh64sum &> /dev/null; then
-        find . -type f ! -name "checksums.xxh64" -exec xxh64sum {} \; > "$checksum_file"
-    elif command -v xxhsum &> /dev/null; then
-        find . -type f ! -name "checksums.xxh64" -exec xxhsum -H64 {} \; > "$checksum_file"
+    if command -v sha256sum &> /dev/null; then
+        find . -type f ! -name "checksums.sha256" -exec sha256sum {} \; > "$checksum_file"
     else
-        log_error "xxHash utility not found (xxh64sum or xxhsum required)"
+        log_error "sha256sum utility not found"
         exit 1
     fi
     
@@ -342,7 +340,7 @@ verify_transfer() {
     
     local backup_name=$(basename "$BACKUP_DIR")
     local remote_path="${HETZNER_REMOTE_PATH}/${backup_name}"
-    local checksum_file="checksums.xxh64"
+    local checksum_file="checksums.sha256"
     
     # Download remote checksums
     local remote_checksums=$(ssh -i "$SSH_KEY_PATH" \

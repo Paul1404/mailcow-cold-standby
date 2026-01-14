@@ -4,15 +4,15 @@ Automated backup solution for [mailcow-dockerized](https://mailcow.email/) to He
 
 ## Features
 
-- 🔒 **Secure SSH key authentication** - No passwords stored
-- 🚀 **Multithreaded backups** - Configurable CPU threads for faster backups
-- 💾 **Intelligent disk space checks** - Pre-flight validation before backup
-- 🔐 **Lock file protection** - Prevents overlapping backups with stale lock detection
-- ✅ **xxHash integrity verification** - Fast checksum validation after transfer
-- 🔄 **Automated retention policy** - Configurable cleanup of old backups (local and remote)
-- ⏰ **Systemd timer integration** - Daily scheduled backups at 3 AM
-- 📋 **Comprehensive logging** - Detailed logs with timestamps and levels
-- 🔙 **Full restore capability** - Interactive restore script with integrity checks
+- **Secure SSH key authentication** - No passwords stored
+- **Multithreaded backups** - Configurable CPU threads for faster backups
+- **Intelligent disk space checks** - Pre-flight validation before backup
+- **Lock file protection** - Prevents overlapping backups with stale lock detection
+- **SHA-256 integrity verification** - Checksum validation after transfer
+- **Automated retention policy** - Configurable cleanup of old backups (local and remote)
+- **Systemd timer integration** - Daily scheduled backups at 3 AM
+- **Comprehensive logging** - Detailed logs with timestamps and levels
+- **Full restore capability** - Interactive restore script with integrity checks
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ Automated backup solution for [mailcow-dockerized](https://mailcow.email/) to He
 - **Hetzner Storage Box**: Active Hetzner storage box with SSH access
 - **SSH Key Pair**: Generated SSH key pair for authentication
 - **Root Access**: Installation requires root or sudo privileges
-- **Dependencies**: rsync, xxhash (automatically installed if missing)
+- **Dependencies**: rsync, sha256sum (included by default in coreutils)
 
 ## Installation
 
@@ -41,7 +41,7 @@ sudo ./install.sh
 
 The installation script will:
 - Auto-detect your mailcow installation
-- Install required dependencies (rsync, xxhash)
+- Install required dependencies (rsync if missing)
 - Create configuration directory at `/etc/mailcow-backup/`
 - Copy scripts to `/usr/local/bin/`
 - Install systemd service and timer units
@@ -313,7 +313,7 @@ ssh -i /root/.ssh/id_rsa_hetzner -p 23 u123456@u123456.your-storagebox.de
    - Create temporary backup directory
    - Run mailcow's native `backup_and_restore.sh` script
    - Use multithreading for faster backup
-   - Generate xxHash checksums for all files
+   - Generate SHA-256 checksums for all files
 
 3. **Transfer**
    - Sync backup directory to Hetzner via rsync over SSH
@@ -414,4 +414,3 @@ For issues and questions:
 
 - [mailcow-dockerized](https://mailcow.email/) - The excellent mail server suite
 - [Hetzner](https://www.hetzner.com/) - Reliable and affordable storage boxes
-- [xxHash](https://github.com/Cyan4973/xxHash) - Extremely fast hash algorithm
