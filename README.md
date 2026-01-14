@@ -409,7 +409,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Support
 
 For issues and questions:
-- GitHub Issues: https://github.com/yourusername/mailcow-cold-standby/issues
+- GitHub Issues: https://github.com/Paul1404/mailcow-cold-standby/issues
 - Mailcow Docs: https://docs.mailcow.email/
 
 ## Acknowledgments

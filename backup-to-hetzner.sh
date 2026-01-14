@@ -189,14 +189,19 @@ check_disk_space() {
     if command -v docker &> /dev/null; then
         # Try to get Docker volumes size - use a simpler, more robust approach
         local docker_root=$(docker info 2>/dev/null | grep "Docker Root Dir" | awk '{print $NF}')
+        log_info "Docker root directory: ${docker_root:-not found}"
         
         if [[ -n "$docker_root" ]] && [[ -d "$docker_root/volumes" ]]; then
             # Calculate size of Docker volumes directory
-            volumes_size=$(du -sb "$docker_root/volumes" 2>/dev/null | awk '{print $1}' || echo "0")
-        fi
-        
-        if [[ -z "$volumes_size" ]] || [[ "$volumes_size" -eq 0 ]]; then
-            log_warn "Could not determine Docker volumes size, estimating 10GB"
+            log_info "Calculating Docker volumes size..."
+            volumes_size=$(du -sb "$docker_root/volumes" 2>/dev/null | awk '{print $1}')
+            
+            if [[ -z "$volumes_size" ]] || [[ "$volumes_size" == "0" ]]; then
+                log_warn "Could not determine Docker volumes size, estimating 10GB"
+                volumes_size=$((10 * 1024 * 1024 * 1024))
+            fi
+        else
+            log_warn "Docker volumes directory not found at $docker_root/volumes, estimating 10GB"
             volumes_size=$((10 * 1024 * 1024 * 1024))
         fi
     else
@@ -204,28 +209,48 @@ check_disk_space() {
         volumes_size=$((10 * 1024 * 1024 * 1024))
     fi
     
+    log_info "Calculated volumes size: $volumes_size bytes"
+    
     # Calculate required space (50% of volumes size + 2GB buffer)
     local required_space=$(( volumes_size / 2 + 2 * 1024 * 1024 * 1024 ))
+    log_info "Required space: $required_space bytes"
     
-    # Ensure temp directory exists for df check
-    mkdir -p "$(dirname "$TEMP_BACKUP_DIR")"
+    # Ensure temp directory parent exists for df check
+    local temp_parent=$(dirname "$TEMP_BACKUP_DIR")
+    if [[ ! -d "$temp_parent" ]]; then
+        log_info "Creating temp directory parent: $temp_parent"
+        mkdir -p "$temp_parent" || {
+            log_error "Failed to create temp directory parent: $temp_parent"
+            exit 1
+        }
+    fi
     
     # Get available space on temp directory filesystem (in KB, convert to bytes)
-    local available_space=$(df -k "$(dirname "$TEMP_BACKUP_DIR")" 2>/dev/null | tail -1 | awk '{print $4 * 1024}')
+    log_info "Checking available space on: $temp_parent"
+    local available_kb=$(df -k "$temp_parent" 2>/dev/null | tail -1 | awk '{print $4}')
     
-    if [[ -z "$available_space" ]] || [[ "$available_space" -eq 0 ]]; then
-        log_error "Could not determine available disk space"
+    if [[ -z "$available_kb" ]]; then
+        log_error "Could not determine available disk space for $temp_parent"
         exit 1
     fi
     
-    log_info "Docker volumes size: $(numfmt --to=iec-i --suffix=B $volumes_size 2>/dev/null || echo "${volumes_size} bytes")"
-    log_info "Required free space: $(numfmt --to=iec-i --suffix=B $required_space 2>/dev/null || echo "${required_space} bytes")"
-    log_info "Available space: $(numfmt --to=iec-i --suffix=B $available_space 2>/dev/null || echo "${available_space} bytes")"
+    local available_space=$((available_kb * 1024))
+    log_info "Available space: $available_space bytes"
+    
+    # Format sizes for human readable output
+    local volumes_human=$(numfmt --to=iec-i --suffix=B $volumes_size 2>/dev/null || echo "$volumes_size bytes")
+    local required_human=$(numfmt --to=iec-i --suffix=B $required_space 2>/dev/null || echo "$required_space bytes")
+    local available_human=$(numfmt --to=iec-i --suffix=B $available_space 2>/dev/null || echo "$available_space bytes")
+    
+    log_info "Docker volumes size: $volumes_human"
+    log_info "Required free space: $required_human"
+    log_info "Available space: $available_human"
     
     if [[ $available_space -lt $required_space ]]; then
         log_error "Insufficient disk space!"
-        log_error "Required: $(numfmt --to=iec-i --suffix=B $required_space 2>/dev/null || echo "${required_space} bytes")"
-        log_error "Available: $(numfmt --to=iec-i --suffix=B $available_space 2>/dev/null || echo "${available_space} bytes")"
+        log_error "Required: $required_human"
+        log_error "Available: $available_human"
+        log_error "Please free up space or change TEMP_BACKUP_DIR to a filesystem with more space"
         exit 1
     fi
     

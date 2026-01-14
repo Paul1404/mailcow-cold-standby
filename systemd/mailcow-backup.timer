@@ -1,6 +1,6 @@
 [Unit]
 Description=Daily mailcow backup timer
-Documentation=https://github.com/yourusername/mailcow-cold-standby
+Documentation=https://github.com/Paul1404/mailcow-cold-standby
 Requires=mailcow-backup.service
 
 [Timer]
