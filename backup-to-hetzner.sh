@@ -466,12 +466,47 @@ verify_transfer() {
 ###############################################################################
 
 cleanup_old_backups() {
+    local backup_dir_to_remove="$1"
     log_info "Cleaning up old backups..."
     
     # Clean up the current backup from local temp after successful transfer
-    if [[ -n "${BACKUP_DIR:-}" ]] && [[ -d "$BACKUP_DIR" ]]; then
-        log_info "Removing local backup after successful transfer: $BACKUP_DIR"
-        rm -rf "$BACKUP_DIR" || log_warn "Failed to remove local backup"
+    # SAFETY CHECKS before rm -rf:
+    # 1. Variable must not be empty
+    # 2. Must be a directory
+    # 3. Must be under TEMP_BACKUP_DIR
+    # 4. Must contain "mailcow" in the path
+    # 5. Must not be a system directory
+    if [[ -z "$backup_dir_to_remove" ]]; then
+        log_warn "No backup directory provided for cleanup"
+        return 1
+    fi
+    
+    if [[ ! -d "$backup_dir_to_remove" ]]; then
+        log_warn "Backup directory doesn't exist: $backup_dir_to_remove"
+        return 1
+    fi
+    
+    # Ensure the path is under TEMP_BACKUP_DIR and contains "mailcow"
+    if [[ "$backup_dir_to_remove" != "$TEMP_BACKUP_DIR"/* ]] || [[ "$backup_dir_to_remove" != *mailcow* ]]; then
+        log_error "SAFETY CHECK FAILED: Path doesn't match expected pattern: $backup_dir_to_remove"
+        log_error "Expected path under: $TEMP_BACKUP_DIR and containing 'mailcow'"
+        return 1
+    fi
+    
+    # Prevent deletion of critical directories
+    case "$backup_dir_to_remove" in
+        /|/root|/home|/etc|/usr|/var|/boot|/sys|/proc|/dev)
+            log_error "SAFETY CHECK FAILED: Refusing to delete system directory: $backup_dir_to_remove"
+            return 1
+            ;;
+    esac
+    
+    log_info "Removing local backup after successful transfer: $backup_dir_to_remove"
+    if rm -rf "${backup_dir_to_remove:?}"; then
+        log_info "Successfully removed local backup"
+    else
+        log_warn "Failed to remove local backup: $backup_dir_to_remove"
+        return 1
     fi
     
     # Clean other old local backups based on retention
@@ -567,8 +602,8 @@ main() {
     # Verify transfer
     verify_transfer
     
-    # Cleanup old backups
-    cleanup_old_backups
+    # Cleanup old backups (pass the backup directory path)
+    cleanup_old_backups "$BACKUP_DIR"
     
     log_info "========================================="
     log_info "Backup completed successfully!"
