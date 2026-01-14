@@ -171,6 +171,107 @@ load_config() {
 }
 
 ###############################################################################
+# Email Notification
+###############################################################################
+
+send_notification() {
+    local status="$1"  # "success" or "failure"
+    local message="$2"
+    
+    # Skip if notifications disabled
+    if [[ "${EMAIL_NOTIFICATIONS:-false}" != "true" ]]; then
+        return 0
+    fi
+    
+    if [[ -z "${NOTIFICATION_EMAIL}" ]]; then
+        log_warn "Email notifications enabled but NOTIFICATION_EMAIL not set"
+        return 1
+    fi
+    
+    local subject
+    local body
+    local hostname=$(hostname -f 2>/dev/null || hostname)
+    local from_addr="${NOTIFICATION_FROM:-mailcow-backup@${hostname}}"
+    
+    if [[ "$status" == "success" ]]; then
+        subject="✓ Mailcow Backup Successful - $hostname"
+        body="Mailcow backup completed successfully on $hostname at $(date '+%Y-%m-%d %H:%M:%S')
+
+Backup Details:
+${message}
+
+Log file: ${LOG_FILE}
+
+---
+Mailcow Cold Standby Backup System
+https://github.com/Paul1404/mailcow-cold-standby"
+    else
+        subject="✗ Mailcow Backup Failed - $hostname"
+        body="Mailcow backup FAILED on $hostname at $(date '+%Y-%m-%d %H:%M:%S')
+
+Error Details:
+${message}
+
+Please check the log file: ${LOG_FILE}
+
+---
+Mailcow Cold Standby Backup System
+https://github.com/Paul1404/mailcow-cold-standby"
+    fi
+    
+    # Use mailcow's SMTP directly on localhost:25
+    # This is the recommended approach per mailcow community
+    if command -v nc &> /dev/null || command -v netcat &> /dev/null; then
+        local nc_cmd=$(command -v nc || command -v netcat)
+        
+        log_info "Sending email notification via mailcow SMTP (localhost:25)..."
+        
+        # Send email via SMTP using netcat
+        {
+            echo "EHLO ${hostname}"
+            sleep 0.5
+            echo "MAIL FROM:<${from_addr}>"
+            sleep 0.5
+            echo "RCPT TO:<${NOTIFICATION_EMAIL}>"
+            sleep 0.5
+            echo "DATA"
+            sleep 0.5
+            echo "From: ${from_addr}"
+            echo "To: ${NOTIFICATION_EMAIL}"
+            echo "Subject: ${subject}"
+            echo "Date: $(date -R)"
+            echo ""
+            echo "${body}"
+            echo "."
+            sleep 0.5
+            echo "QUIT"
+        } | $nc_cmd localhost 25 > /dev/null 2>&1 && \
+            log_info "Email notification sent to $NOTIFICATION_EMAIL" && return 0
+    fi
+    
+    # Fallback to swaks (can connect directly to mailcow SMTP)
+    if command -v swaks &> /dev/null; then
+        swaks --to "$NOTIFICATION_EMAIL" \
+              --from "$from_addr" \
+              --server localhost:25 \
+              --subject "$subject" \
+              --body "$body" \
+              --silent 2 2>/dev/null && \
+            log_info "Email notification sent to $NOTIFICATION_EMAIL via swaks" && return 0
+    fi
+    
+    # Fallback to mail command
+    if command -v mail &> /dev/null; then
+        echo "$body" | mail -s "$subject" -r "$from_addr" "$NOTIFICATION_EMAIL" 2>/dev/null && \
+            log_info "Email notification sent to $NOTIFICATION_EMAIL via mail" && return 0
+    fi
+    
+    log_warn "Could not send email notification - netcat/nc, swaks, or mail command required"
+    log_warn "Install netcat: dnf install -y nmap-ncat"
+    return 1
+}
+
+###############################################################################
 # SSH Connection Validation
 ###############################################################################
 
@@ -608,7 +709,31 @@ main() {
     log_info "========================================="
     log_info "Backup completed successfully!"
     log_info "========================================="
+    
+    # Send success notification
+    local backup_name=$(basename "$BACKUP_DIR")
+    local backup_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "unknown")
+    send_notification "success" "Backup: $backup_name
+Size: $backup_size
+Location: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_REMOTE_PATH}/$backup_name"
 }
+
+# Error handler for failure notifications
+handle_error() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        send_notification "failure" "Backup failed with exit code: $exit_code
+Check log file for details: ${LOG_FILE}"
+    fi
+    release_lock
+    exit $exit_code
+}
+
+# Set up error trap
+trap handle_error ERR EXIT
 
 # Run main function
 main "$@"
+
+# Remove trap on successful completion
+trap - ERR EXIT

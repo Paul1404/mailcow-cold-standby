@@ -11,6 +11,7 @@ Automated backup solution for [mailcow-dockerized](https://mailcow.email/) to He
 - **SHA-256 integrity verification** - Checksum validation after transfer
 - **Automated retention policy** - Configurable cleanup of old backups (local and remote)
 - **Systemd timer integration** - Daily scheduled backups at 3 AM
+- **Email notifications** - Optional success/failure notifications using mailcow's mail system
 - **Comprehensive logging** - Detailed logs with timestamps and levels
 - **Full restore capability** - Interactive restore script with integrity checks
 
@@ -76,6 +77,9 @@ All configuration is stored in `/etc/mailcow-backup/.env`. Key parameters:
 | `LOCK_TIMEOUT_HOURS` | Hours before lock is considered stale | `24` |
 | `LOG_FILE` | Path to log file | `/var/log/mailcow-backup.log` |
 | `TEMP_BACKUP_DIR` | Temporary directory for backups | `/tmp/mailcow-backup` |
+| `EMAIL_NOTIFICATIONS` | Enable email notifications (true/false) | `false` |
+| `NOTIFICATION_EMAIL` | Email address for notifications | Required if enabled |
+| `NOTIFICATION_FROM` | From address for notifications | `mailcow-backup@example.com` |
 
 ### Component Options
 
@@ -179,6 +183,37 @@ View recent backup operations:
 ```bash
 journalctl -u mailcow-backup.service --since today
 ```
+
+### Email Notifications
+
+Enable email notifications to receive alerts about backup success or failure:
+
+1. Edit configuration:
+
+```bash
+sudo nano /etc/mailcow-backup/.env
+```
+
+2. Set notification parameters:
+
+```bash
+EMAIL_NOTIFICATIONS=true
+NOTIFICATION_EMAIL=admin@yourdomain.com
+NOTIFICATION_FROM=mailcow-backup@yourdomain.com
+```
+
+3. The script connects directly to mailcow's SMTP service on `localhost:25` (no MTA installation needed on host).
+
+4. Requirements: `netcat` (nmap-ncat) is recommended for SMTP communication:
+
+```bash
+sudo dnf install -y nmap-ncat
+```
+
+5. Notifications include:
+   - Backup success with size and location details
+   - Backup failure with error information and log file path
+   - Hostname and timestamp for identification
 
 ## Hetzner Storage Box Setup
 
