@@ -298,15 +298,24 @@ perform_backup() {
         exit 1
     fi
     
-    # Find the created backup directory
-    BACKUP_DIR=$(find "$TEMP_BACKUP_DIR" -maxdepth 1 -type d -name "mailcow_*" -printf "%T@ %p\n" | sort -n | tail -1 | cut -d' ' -f2)
+    # Find the created backup directory (mailcow creates mailcow-YYYY-MM-DD-HH-MM-SS directories)
+    BACKUP_DIR=$(find "$TEMP_BACKUP_DIR" -maxdepth 1 -type d \( -name "mailcow-*" -o -name "mailcow_*" -o -name "backup-*" \) -printf "%T@ %p\n" 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2)
     
+    # If no subdirectory found, check if backup files are directly in TEMP_BACKUP_DIR
     if [[ -z "$BACKUP_DIR" ]] || [[ ! -d "$BACKUP_DIR" ]]; then
-        log_error "Backup directory not found in $TEMP_BACKUP_DIR"
-        exit 1
+        # Check if backup files exist directly in the temp directory
+        if find "$TEMP_BACKUP_DIR" -maxdepth 1 -type f -name "*.sql.gz" -o -name "backup_*" | grep -q .; then
+            log_info "Backup files created directly in: $TEMP_BACKUP_DIR"
+            BACKUP_DIR="$TEMP_BACKUP_DIR"
+        else
+            log_error "Backup directory not found in $TEMP_BACKUP_DIR"
+            log_error "Contents of $TEMP_BACKUP_DIR:"
+            ls -la "$TEMP_BACKUP_DIR" 2>&1 | tee -a "${LOG_FILE:-/var/log/mailcow-backup.log}"
+            exit 1
+        fi
+    else
+        log_info "Backup created at: $BACKUP_DIR"
     fi
-    
-    log_info "Backup created at: $BACKUP_DIR"
 }
 
 ###############################################################################
@@ -407,14 +416,14 @@ cleanup_old_backups() {
     
     # Clean local backups
     log_info "Removing local backups older than $LOCAL_RETENTION_DAYS days..."
-    find "$TEMP_BACKUP_DIR" -maxdepth 1 -type d -name "mailcow_*" -mtime +"$LOCAL_RETENTION_DAYS" -exec rm -rf {} \; 2>/dev/null || true
+    find "$TEMP_BACKUP_DIR" -maxdepth 1 -type d \( -name "mailcow-*" -o -name "mailcow_*" \) -mtime +"$LOCAL_RETENTION_DAYS" -exec rm -rf {} \; 2>/dev/null || true
     
     # Clean remote backups
     log_info "Removing remote backups older than $REMOTE_RETENTION_DAYS days..."
     ssh -i "$SSH_KEY_PATH" \
         -p "$HETZNER_PORT" \
         "${HETZNER_USER}@${HETZNER_HOST}" \
-        "find ${HETZNER_REMOTE_PATH} -maxdepth 1 -type d -name 'mailcow_*' -mtime +${REMOTE_RETENTION_DAYS} -exec rm -rf {} \;" 2>/dev/null || {
+        "find ${HETZNER_REMOTE_PATH} -maxdepth 1 -type d \( -name 'mailcow-*' -o -name 'mailcow_*' \) -mtime +${REMOTE_RETENTION_DAYS} -exec rm -rf {} \;" 2>/dev/null || {
         log_warn "Failed to clean remote backups (non-critical)"
     }
     
