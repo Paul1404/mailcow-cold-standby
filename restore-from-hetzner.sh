@@ -16,7 +16,14 @@ set -euo pipefail
 CONFIG_FILE="/etc/mailcow-backup/.env"
 RESTORE_LOG="/var/log/mailcow-restore.log"
 
-# Color codes for output
+# Detect if running interactively
+if [[ -t 1 ]]; then
+    INTERACTIVE=true
+else
+    INTERACTIVE=false
+fi
+
+# Color codes for output (only used in interactive mode)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -32,22 +39,39 @@ log() {
     shift
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${timestamp} [${level}] ${message}" >> "$RESTORE_LOG"
+    
+    # Always write to log file with timestamp
+    echo "${timestamp} [${level}] ${message}" >> "$RESTORE_LOG"
 }
 
 log_info() {
     log "INFO" "$@"
-    echo -e "${GREEN}[INFO]${NC} $*"
+    
+    if [[ "$INTERACTIVE" == true ]]; then
+        echo -e "${GREEN}[INFO]${NC} $*"
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $*"
+    fi
 }
 
 log_warn() {
     log "WARN" "$@"
-    echo -e "${YELLOW}[WARN]${NC} $*"
+    
+    if [[ "$INTERACTIVE" == true ]]; then
+        echo -e "${YELLOW}[WARN]${NC} $*"
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] $*"
+    fi
 }
 
 log_error() {
     log "ERROR" "$@"
-    echo -e "${RED}[ERROR]${NC} $*" >&2
+    
+    if [[ "$INTERACTIVE" == true ]]; then
+        echo -e "${RED}[ERROR]${NC} $*" >&2
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $*" >&2
+    fi
 }
 
 ###############################################################################
