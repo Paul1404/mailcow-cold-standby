@@ -1,0 +1,30 @@
+[Unit]
+Description=Mailcow backup to Hetzner storage box
+Documentation=https://github.com/yourusername/mailcow-cold-standby
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/usr/local/bin
+EnvironmentFile=/etc/mailcow-backup/.env
+
+# Execute the backup script
+ExecStart=/usr/local/bin/backup-to-hetzner.sh
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mailcow-backup
+
+# Security settings
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# Timeout (4 hours for large backups)
+TimeoutStartSec=4h
+
+[Install]
+WantedBy=multi-user.target

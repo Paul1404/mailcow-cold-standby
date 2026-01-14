@@ -1,0 +1,26 @@
+# Environment configuration
+.env
+
+# Backup directories
+backup/
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+
+# Log files
+*.log
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

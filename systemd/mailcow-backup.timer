@@ -1,0 +1,23 @@
+[Unit]
+Description=Daily mailcow backup timer
+Documentation=https://github.com/yourusername/mailcow-cold-standby
+Requires=mailcow-backup.service
+
+[Timer]
+# Run daily at 3:00 AM
+OnCalendar=*-*-* 03:00:00
+
+# Run immediately if system was off during scheduled time
+Persistent=true
+
+# Add random delay to prevent exact-time load spikes
+RandomizedDelaySec=15min
+
+# Accuracy (how close to the scheduled time)
+AccuracySec=1min
+
+# Specify which service to trigger
+Unit=mailcow-backup.service
+
+[Install]
+WantedBy=timers.target
