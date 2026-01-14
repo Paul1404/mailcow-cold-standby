@@ -202,6 +202,8 @@ Add this key in the Hetzner Robot panel:
 - Navigate to "SSH Support" or "Access"
 - Add your public key
 
+**Note**: Hetzner Storage Boxes use a restricted shell environment that starts in the `/home` directory. You don't have access to directories outside `/home`, so use relative paths (e.g., `mailcow-backups`) or absolute paths within `/home` (e.g., `/home/mailcow-backups`) for your backup destination.
+
 3. **Test SSH Connection**:
 
 ```bash
