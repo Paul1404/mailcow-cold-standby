@@ -419,13 +419,35 @@ cleanup_old_backups() {
     find "$TEMP_BACKUP_DIR" -maxdepth 1 -type d \( -name "mailcow-*" -o -name "mailcow_*" \) -mtime +"$LOCAL_RETENTION_DAYS" -exec rm -rf {} \; 2>/dev/null || true
     
     # Clean remote backups
+    # Note: Hetzner Storage Box has limited shell - we need to use a simpler approach
     log_info "Removing remote backups older than $REMOTE_RETENTION_DAYS days..."
-    ssh -i "$SSH_KEY_PATH" \
-        -p "$HETZNER_PORT" \
-        "${HETZNER_USER}@${HETZNER_HOST}" \
-        "find ${HETZNER_REMOTE_PATH} -maxdepth 1 -type d \( -name 'mailcow-*' -o -name 'mailcow_*' \) -mtime +${REMOTE_RETENTION_DAYS} -exec rm -rf {} \;" 2>/dev/null || {
-        log_warn "Failed to clean remote backups (non-critical)"
-    }
+    
+    # Get list of old backup directories
+    local cutoff_date=$(date -d "$REMOTE_RETENTION_DAYS days ago" +%Y-%m-%d 2>/dev/null || date -v-${REMOTE_RETENTION_DAYS}d +%Y-%m-%d 2>/dev/null)
+    
+    if [[ -n "$cutoff_date" ]]; then
+        # List directories and filter by date in the directory name
+        local old_backups=$(ssh -i "$SSH_KEY_PATH" \
+            -p "$HETZNER_PORT" \
+            "${HETZNER_USER}@${HETZNER_HOST}" \
+            "cd ${HETZNER_REMOTE_PATH} 2>/dev/null && ls -1d mailcow-* 2>/dev/null" | \
+            awk -v cutoff="$cutoff_date" '$0 < "mailcow-"cutoff')
+        
+        if [[ -n "$old_backups" ]]; then
+            while IFS= read -r backup_dir; do
+                log_info "Removing remote backup: $backup_dir"
+                ssh -i "$SSH_KEY_PATH" \
+                    -p "$HETZNER_PORT" \
+                    "${HETZNER_USER}@${HETZNER_HOST}" \
+                    "rm -rf ${HETZNER_REMOTE_PATH}/${backup_dir}" 2>/dev/null || \
+                    log_warn "Failed to remove $backup_dir"
+            done <<< "$old_backups"
+        else
+            log_info "No old remote backups to remove"
+        fi
+    else
+        log_warn "Could not determine cutoff date for remote cleanup"
+    fi
     
     log_info "Cleanup completed"
 }

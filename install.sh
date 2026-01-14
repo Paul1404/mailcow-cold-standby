@@ -293,6 +293,24 @@ install_systemd_units() {
 }
 
 ###############################################################################
+# Install Logrotate Configuration
+###############################################################################
+
+install_logrotate() {
+    print_info "Installing logrotate configuration..."
+    
+    # Get absolute path to repo
+    local repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # Copy logrotate config
+    cp -f "$repo_dir/logrotate/mailcow-backup" "/etc/logrotate.d/mailcow-backup"
+    chmod 644 "/etc/logrotate.d/mailcow-backup"
+    print_info "Installed: /etc/logrotate.d/mailcow-backup"
+    print_info "Logs will be rotated daily, keeping 14 days of history"
+    print_info "Logrotate configuration installed ✓"
+}
+
+###############################################################################
 # Verify SSH Setup
 ###############################################################################
 
@@ -472,6 +490,7 @@ main() {
     # Install components
     install_scripts
     install_systemd_units
+    install_logrotate
     
     echo ""
     

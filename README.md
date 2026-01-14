@@ -343,6 +343,8 @@ mailcow-cold-standby/
 ├── install.sh               # Installation script
 ├── LICENSE                  # MIT License
 ├── README.md                # This file
+├── logrotate/
+│   └── mailcow-backup       # Logrotate configuration
 └── systemd/
     ├── mailcow-backup.service  # Systemd service unit
     └── mailcow-backup.timer    # Systemd timer unit
@@ -356,6 +358,7 @@ mailcow-cold-standby/
 /usr/local/bin/restore-from-hetzner.sh
 /etc/systemd/system/mailcow-backup.service
 /etc/systemd/system/mailcow-backup.timer
+/etc/logrotate.d/mailcow-backup  # Log rotation config
 /var/log/mailcow-backup.log      # Main log file
 /var/log/mailcow-restore.log     # Restore log file
 /var/lock/mailcow-backup.lock    # Lock file (temporary)

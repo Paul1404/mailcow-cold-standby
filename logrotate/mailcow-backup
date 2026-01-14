@@ -1,0 +1,10 @@
+/var/log/mailcow-backup.log /var/log/mailcow-restore.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+    sharedscripts
+}
