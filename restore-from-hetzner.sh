@@ -32,7 +32,7 @@ log() {
     shift
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${timestamp} [${level}] ${message}" | tee -a "$RESTORE_LOG"
+    echo -e "${timestamp} [${level}] ${message}" >> "$RESTORE_LOG"
 }
 
 log_info() {

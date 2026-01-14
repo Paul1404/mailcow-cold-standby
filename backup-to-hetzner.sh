@@ -32,7 +32,7 @@ log() {
     shift
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${timestamp} [${level}] ${message}" | tee -a "${LOG_FILE:-/var/log/mailcow-backup.log}"
+    echo -e "${timestamp} [${level}] ${message}" >> "${LOG_FILE:-/var/log/mailcow-backup.log}"
 }
 
 log_info() {
