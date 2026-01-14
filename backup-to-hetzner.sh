@@ -238,9 +238,10 @@ check_disk_space() {
     
     log_info "Calculated volumes size: $volumes_size bytes"
     
-    # Calculate required space (50% of volumes size + 2GB buffer)
-    local required_space=$(( volumes_size / 2 + 2 * 1024 * 1024 * 1024 ))
-    log_info "Required space: $required_space bytes"
+    # Calculate required space (100% of volumes size + 5GB buffer for compression overhead)
+    # Note: Backups are compressed but we need working space during compression
+    local required_space=$(( volumes_size + 5 * 1024 * 1024 * 1024 ))
+    log_info "Required space: $required_space bytes (100% of volumes + 5GB buffer)"
     
     # Ensure temp directory parent exists for df check
     local temp_parent=$(dirname "$TEMP_BACKUP_DIR")
@@ -297,6 +298,12 @@ perform_backup() {
         docker rm -f mailcow-backup >/dev/null 2>&1 || true
     fi
     
+    # Clean up temp directory to free space
+    if [[ -d "$TEMP_BACKUP_DIR" ]]; then
+        log_info "Cleaning up old temp backups to free space..."
+        rm -rf "${TEMP_BACKUP_DIR:?}"/mailcow-* 2>/dev/null || true
+    fi
+    
     # Create temporary backup directory
     mkdir -p "$TEMP_BACKUP_DIR"
     
@@ -351,6 +358,14 @@ perform_backup() {
 
 generate_checksums() {
     log_info "Generating checksums for backup verification..."
+    
+    # Quick disk space check
+    local available_space=$(df -k "$(dirname "$BACKUP_DIR")" 2>/dev/null | tail -1 | awk '{print $4 * 1024}')
+    if [[ $available_space -lt $((1 * 1024 * 1024 * 1024)) ]]; then
+        log_error "Low disk space detected before checksum generation"
+        log_error "Available: $(numfmt --to=iec-i --suffix=B $available_space 2>/dev/null || echo "${available_space} bytes")"
+        exit 1
+    fi
     
     local checksum_file="${BACKUP_DIR}/checksums.sha256"
     
@@ -453,7 +468,13 @@ verify_transfer() {
 cleanup_old_backups() {
     log_info "Cleaning up old backups..."
     
-    # Clean local backups
+    # Clean up the current backup from local temp after successful transfer
+    if [[ -n "${BACKUP_DIR:-}" ]] && [[ -d "$BACKUP_DIR" ]]; then
+        log_info "Removing local backup after successful transfer: $BACKUP_DIR"
+        rm -rf "$BACKUP_DIR" || log_warn "Failed to remove local backup"
+    fi
+    
+    # Clean other old local backups based on retention
     log_info "Removing local backups older than $LOCAL_RETENTION_DAYS days..."
     find "$TEMP_BACKUP_DIR" -maxdepth 1 -type d \( -name "mailcow-*" -o -name "mailcow_*" \) -mtime +"$LOCAL_RETENTION_DAYS" -exec rm -rf {} \; 2>/dev/null || true
     
