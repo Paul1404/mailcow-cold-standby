@@ -174,6 +174,9 @@ install_dependencies() {
 create_config() {
     print_info "Setting up configuration..."
     
+    # Get absolute path to repo
+    local repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
     # Create config directory
     mkdir -p "$CONFIG_DIR"
     chmod 700 "$CONFIG_DIR"
@@ -191,7 +194,7 @@ create_config() {
     fi
     
     # Copy template
-    cp .env.example "$CONFIG_DIR/.env"
+    cp -f "$repo_dir/.env.example" "$CONFIG_DIR/.env"
     chmod 600 "$CONFIG_DIR/.env"
     
     # Update mailcow path in config
@@ -248,25 +251,33 @@ create_config() {
 install_scripts() {
     print_info "Installing backup scripts..."
     
-    # Install backup script
-    install -m 755 backup-to-hetzner.sh "$INSTALL_DIR/backup-to-hetzner.sh"
-    print_info "Installed: $INSTALL_DIR/backup-to-hetzner.sh"
+    # Get absolute path to repo
+    local repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     
-    # Install restore script
-    install -m 755 restore-from-hetzner.sh "$INSTALL_DIR/restore-from-hetzner.sh"
-    print_info "Installed: $INSTALL_DIR/restore-from-hetzner.sh"
+    # Create symlinks (force overwrite if exists)
+    ln -sf "$repo_dir/backup-to-hetzner.sh" "$INSTALL_DIR/backup-to-hetzner.sh"
+    print_info "Symlinked: $INSTALL_DIR/backup-to-hetzner.sh -> $repo_dir/backup-to-hetzner.sh"
+    
+    ln -sf "$repo_dir/restore-from-hetzner.sh" "$INSTALL_DIR/restore-from-hetzner.sh"
+    print_info "Symlinked: $INSTALL_DIR/restore-from-hetzner.sh -> $repo_dir/restore-from-hetzner.sh"
+    
+    # Ensure scripts are executable
+    chmod +x "$repo_dir/backup-to-hetzner.sh"
+    chmod +x "$repo_dir/restore-from-hetzner.sh"
     
     print_info "Scripts installed ✓"
 }
 
 ###############################################################################
-# Install Systemd Units
-###############################################################################
-
-install_systemd_units() {
-    print_info "Installing systemd units..."
+# InstGet absolute path to repo
+    local repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     
-    # Install service
+    # Copy (not symlink) systemd units as systemd expects actual files
+    cp -f "$repo_dir/systemd/mailcow-backup.service" "$SYSTEMD_DIR/mailcow-backup.service"
+    chmod 644 "$SYSTEMD_DIR/mailcow-backup.service"
+    print_info "Installed: $SYSTEMD_DIR/mailcow-backup.service"
+    
+    cp -f "$repo_dir/systemd/mailcow-backup.timer"
     cp systemd/mailcow-backup.service "$SYSTEMD_DIR/mailcow-backup.service"
     chmod 644 "$SYSTEMD_DIR/mailcow-backup.service"
     print_info "Installed: $SYSTEMD_DIR/mailcow-backup.service"
