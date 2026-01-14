@@ -17,7 +17,14 @@ set -euo pipefail
 CONFIG_FILE="/etc/mailcow-backup/.env"
 LOCK_FILE="/var/lock/mailcow-backup.lock"
 
-# Color codes for output
+# Detect if running interactively or from systemd
+if [[ -t 1 ]]; then
+    INTERACTIVE=true
+else
+    INTERACTIVE=false
+fi
+
+# Color codes for output (only used in interactive mode)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -32,22 +39,42 @@ log() {
     shift
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "${timestamp} [${level}] ${message}" >> "${LOG_FILE:-/var/log/mailcow-backup.log}"
+    
+    # Always write to log file with timestamp
+    echo "${timestamp} [${level}] ${message}" >> "${LOG_FILE:-/var/log/mailcow-backup.log}"
 }
 
 log_info() {
     log "INFO" "$@"
-    echo -e "${GREEN}[INFO]${NC} $*"
+    
+    # Output format depends on context
+    if [[ "$INTERACTIVE" == true ]]; then
+        # Interactive: colored output without timestamp
+        echo -e "${GREEN}[INFO]${NC} $*"
+    else
+        # Systemd/cron: plain output with timestamp for journal
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $*"
+    fi
 }
 
 log_warn() {
     log "WARN" "$@"
-    echo -e "${YELLOW}[WARN]${NC} $*"
+    
+    if [[ "$INTERACTIVE" == true ]]; then
+        echo -e "${YELLOW}[WARN]${NC} $*"
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] $*"
+    fi
 }
 
 log_error() {
     log "ERROR" "$@"
-    echo -e "${RED}[ERROR]${NC} $*" >&2
+    
+    if [[ "$INTERACTIVE" == true ]]; then
+        echo -e "${RED}[ERROR]${NC} $*" >&2
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $*" >&2
+    fi
 }
 
 ###############################################################################
@@ -359,14 +386,26 @@ transfer_to_hetzner() {
         exit 1
     }
     
-    # Transfer using rsync
+    # Calculate backup size
+    local backup_size=$(du -sh "$BACKUP_DIR" | cut -f1)
+    log_info "Backup size: $backup_size"
     log_info "Syncing to ${HETZNER_USER}@${HETZNER_HOST}:${remote_path}"
     
+    # Transfer using rsync with progress
     if rsync -avz \
              --delete \
+             --info=progress2 \
+             --no-inc-recursive \
              -e "ssh -i $SSH_KEY_PATH -p $HETZNER_PORT" \
              "$BACKUP_DIR/" \
-             "${HETZNER_USER}@${HETZNER_HOST}:${remote_path}/"; then
+             "${HETZNER_USER}@${HETZNER_HOST}:${remote_path}/" 2>&1 | \
+             while IFS= read -r line; do
+                 # Log important rsync output
+                 if [[ "$line" =~ ^(sending|sent|total) ]] || [[ "$line" =~ [0-9]+% ]]; then
+                     echo "$line"
+                     log "INFO" "rsync: $line"
+                 fi
+             done; then
         log_info "Transfer completed successfully"
     else
         log_error "Transfer failed"
