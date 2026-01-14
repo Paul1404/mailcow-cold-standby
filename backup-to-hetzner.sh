@@ -264,6 +264,12 @@ check_disk_space() {
 perform_backup() {
     log_info "Starting mailcow backup process..."
     
+    # Clean up any leftover backup containers from previous runs
+    if docker ps -a --format '{{.Names}}' | grep -q '^mailcow-backup$'; then
+        log_info "Removing leftover mailcow-backup container..."
+        docker rm -f mailcow-backup >/dev/null 2>&1 || true
+    fi
+    
     # Create temporary backup directory
     mkdir -p "$TEMP_BACKUP_DIR"
     
