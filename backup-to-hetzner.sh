@@ -580,7 +580,7 @@ verify_transfer() {
 ###############################################################################
 
 get_remote_storage_stats() {
-    log_info "Gathering remote storage statistics..."
+    # Note: No log_info here - output goes to stdout and would be captured with the return value
     
     local backup_name="$1"
     local ssh_opts="-i $SSH_KEY_PATH -p $HETZNER_PORT -o BatchMode=yes -o ConnectTimeout=10"
@@ -742,6 +742,7 @@ main() {
     cleanup_old_backups
     
     # Gather remote storage statistics
+    log_info "Gathering remote storage statistics..."
     local remote_stats=$(get_remote_storage_stats "$backup_name")
     local remote_backup_size=$(echo "$remote_stats" | cut -d'|' -f1)
     local remote_total_used=$(echo "$remote_stats" | cut -d'|' -f2)
