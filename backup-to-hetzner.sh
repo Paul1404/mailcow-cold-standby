@@ -193,7 +193,7 @@ send_notification() {
     local from_addr="${NOTIFICATION_FROM:-mailcow-backup@${hostname}}"
     
     if [[ "$status" == "success" ]]; then
-        subject="✓ Mailcow Backup Successful - $hostname"
+        subject="=?UTF-8?B?$(echo -n "✓ Mailcow Backup Successful - $hostname" | base64 -w0)?="
         body="Mailcow backup completed successfully on $hostname at $(date '+%Y-%m-%d %H:%M:%S')
 
 Backup Details:
@@ -205,7 +205,7 @@ Log file: ${LOG_FILE}
 Mailcow Cold Standby Backup System
 https://github.com/Paul1404/mailcow-cold-standby"
     else
-        subject="✗ Mailcow Backup Failed - $hostname"
+        subject="=?UTF-8?B?$(echo -n "✗ Mailcow Backup Failed - $hostname" | base64 -w0)?="
         body="Mailcow backup FAILED on $hostname at $(date '+%Y-%m-%d %H:%M:%S')
 
 Error Details:
@@ -218,55 +218,66 @@ Mailcow Cold Standby Backup System
 https://github.com/Paul1404/mailcow-cold-standby"
     fi
     
-    # Use mailcow's SMTP directly on localhost:25
-    # This is the recommended approach per mailcow community
+    # Primary method: Use docker exec to send via postfix container (most reliable)
+    # This works because we're running on the mailcow host
+    # Container name varies: postfix-mailcow or mailcowdockerized-postfix-mailcow-1
+    local postfix_container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'postfix-mailcow' | head -1)
+    
+    if [[ -n "$postfix_container" ]]; then
+        log_info "Sending email notification via $postfix_container container..."
+        
+        # Construct the email with proper headers
+        local email_content="From: ${from_addr}
+To: ${NOTIFICATION_EMAIL}
+Subject: ${subject}
+Date: $(date -R)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+X-Mailer: mailcow-cold-standby
+
+${body}"
+        
+        # Send via postfix's sendmail in the container
+        if echo "$email_content" | docker exec -i "$postfix_container" sendmail -t -oi 2>/dev/null; then
+            log_info "Email notification sent to $NOTIFICATION_EMAIL via postfix container"
+            return 0
+        else
+            log_warn "Failed to send via postfix container, trying fallback methods..."
+        fi
+    fi
+    
+    # Fallback: Try localhost SMTP via netcat
     if command -v nc &> /dev/null || command -v netcat &> /dev/null; then
         local nc_cmd=$(command -v nc || command -v netcat)
         
-        log_info "Sending email notification via mailcow SMTP (localhost:25)..."
+        log_info "Sending email notification via localhost:25..."
         
-        # Send email via SMTP using netcat
         {
             echo "EHLO ${hostname}"
-            sleep 0.5
+            sleep 0.3
             echo "MAIL FROM:<${from_addr}>"
-            sleep 0.5
+            sleep 0.3
             echo "RCPT TO:<${NOTIFICATION_EMAIL}>"
-            sleep 0.5
+            sleep 0.3
             echo "DATA"
-            sleep 0.5
+            sleep 0.3
             echo "From: ${from_addr}"
             echo "To: ${NOTIFICATION_EMAIL}"
             echo "Subject: ${subject}"
             echo "Date: $(date -R)"
+            echo "MIME-Version: 1.0"
+            echo "Content-Type: text/plain; charset=UTF-8"
             echo ""
             echo "${body}"
             echo "."
-            sleep 0.5
+            sleep 0.3
             echo "QUIT"
         } | $nc_cmd localhost 25 > /dev/null 2>&1 && \
             log_info "Email notification sent to $NOTIFICATION_EMAIL" && return 0
     fi
     
-    # Fallback to swaks (can connect directly to mailcow SMTP)
-    if command -v swaks &> /dev/null; then
-        swaks --to "$NOTIFICATION_EMAIL" \
-              --from "$from_addr" \
-              --server localhost:25 \
-              --subject "$subject" \
-              --body "$body" \
-              --silent 2 2>/dev/null && \
-            log_info "Email notification sent to $NOTIFICATION_EMAIL via swaks" && return 0
-    fi
-    
-    # Fallback to mail command
-    if command -v mail &> /dev/null; then
-        echo "$body" | mail -s "$subject" -r "$from_addr" "$NOTIFICATION_EMAIL" 2>/dev/null && \
-            log_info "Email notification sent to $NOTIFICATION_EMAIL via mail" && return 0
-    fi
-    
-    log_warn "Could not send email notification - netcat/nc, swaks, or mail command required"
-    log_warn "Install netcat: dnf install -y nmap-ncat"
+    log_warn "Could not send email notification"
+    log_warn "Ensure postfix-mailcow container is running or install netcat"
     return 1
 }
 
