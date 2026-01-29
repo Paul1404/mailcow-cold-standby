@@ -177,8 +177,9 @@ send_notification() {
     local status="$1"  # "success" or "failure"
     local message="$2"
     
-    # Skip if notifications disabled
-    if [[ "${EMAIL_NOTIFICATIONS:-false}" != "true" ]]; then
+    # Skip if notifications disabled (accept true, yes, 1)
+    local notifications_enabled="${EMAIL_NOTIFICATIONS:-false}"
+    if [[ "$notifications_enabled" != "true" ]] && [[ "$notifications_enabled" != "yes" ]] && [[ "$notifications_enabled" != "1" ]]; then
         return 0
     fi
     
@@ -695,6 +696,10 @@ main() {
     # Verify transfer
     verify_transfer
     
+    # Capture backup info before cleanup
+    local backup_name=$(basename "$BACKUP_DIR")
+    local backup_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "unknown")
+    
     # Cleanup - remove all local backups (they're safely on Hetzner now)
     cleanup_old_backups
     
@@ -703,8 +708,6 @@ main() {
     log_info "========================================="
     
     # Send success notification
-    local backup_name=$(basename "$BACKUP_DIR")
-    local backup_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "unknown")
     send_notification "success" "Backup: $backup_name
 Size: $backup_size
 Location: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_REMOTE_PATH}/$backup_name"
