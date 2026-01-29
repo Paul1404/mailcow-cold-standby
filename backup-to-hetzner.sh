@@ -161,7 +161,6 @@ load_config() {
     # Set defaults for optional variables
     BACKUP_COMPONENTS="${BACKUP_COMPONENTS:-all}"
     THREADS="${THREADS:-4}"
-    LOCAL_RETENTION_DAYS="${LOCAL_RETENTION_DAYS:-7}"
     REMOTE_RETENTION_DAYS="${REMOTE_RETENTION_DAYS:-30}"
     LOCK_TIMEOUT_HOURS="${LOCK_TIMEOUT_HOURS:-24}"
     LOG_FILE="${LOG_FILE:-/var/log/mailcow-backup.log}"
@@ -426,7 +425,8 @@ perform_backup() {
     export MAILCOW_BACKUP_LOCATION="$TEMP_BACKUP_DIR"
     export THREADS="$THREADS"
     
-    if bash helper-scripts/backup_and_restore.sh backup $BACKUP_COMPONENTS --delete-days "$LOCAL_RETENTION_DAYS"; then
+    # Use --delete-days 0 since we don't keep local backups (they go to Hetzner)
+    if bash helper-scripts/backup_and_restore.sh backup $BACKUP_COMPONENTS --delete-days 0; then
         log_info "Mailcow backup completed successfully"
     else
         log_error "Mailcow backup failed"
@@ -684,8 +684,8 @@ main() {
     # Verify transfer
     verify_transfer
     
-    # Cleanup old backups (pass the backup directory path)
-    cleanup_old_backups "$BACKUP_DIR"
+    # Cleanup - remove all local backups (they're safely on Hetzner now)
+    cleanup_old_backups
     
     log_info "========================================="
     log_info "Backup completed successfully!"
