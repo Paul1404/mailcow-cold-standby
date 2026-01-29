@@ -192,31 +192,32 @@ send_notification() {
     local body
     local hostname=$(hostname -f 2>/dev/null || hostname)
     local from_addr="${NOTIFICATION_FROM:-mailcow-backup@${hostname}}"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     
     if [[ "$status" == "success" ]]; then
-        subject="=?UTF-8?B?$(echo -n "✓ Mailcow Backup Successful - $hostname" | base64 -w0)?="
-        body="Mailcow backup completed successfully on $hostname at $(date '+%Y-%m-%d %H:%M:%S')
-
-Backup Details:
+        subject="=?UTF-8?B?$(echo -n "✓ Mailcow Backup OK - $hostname" | base64 -w0)?="
+        body="MAILCOW BACKUP REPORT
+Generated: ${timestamp}
+Status: SUCCESS
 ${message}
-
-Log file: ${LOG_FILE}
-
----
-Mailcow Cold Standby Backup System
-https://github.com/Paul1404/mailcow-cold-standby"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Log: ${LOG_FILE}
+Docs: https://github.com/Paul1404/mailcow-cold-standby"
     else
-        subject="=?UTF-8?B?$(echo -n "✗ Mailcow Backup Failed - $hostname" | base64 -w0)?="
-        body="Mailcow backup FAILED on $hostname at $(date '+%Y-%m-%d %H:%M:%S')
+        subject="=?UTF-8?B?$(echo -n "✗ Mailcow Backup FAILED - $hostname" | base64 -w0)?="
+        body="MAILCOW BACKUP REPORT
+Generated: ${timestamp}
+Status: FAILED
 
-Error Details:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ERROR DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${message}
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Please check the log file: ${LOG_FILE}
 
----
-Mailcow Cold Standby Backup System
-https://github.com/Paul1404/mailcow-cold-standby"
+Docs: https://github.com/Paul1404/mailcow-cold-standby"
     fi
     
     # Primary method: Use docker exec to send via postfix container (most reliable)
@@ -575,6 +576,44 @@ verify_transfer() {
 }
 
 ###############################################################################
+# Remote Storage Statistics
+###############################################################################
+
+get_remote_storage_stats() {
+    log_info "Gathering remote storage statistics..."
+    
+    local backup_name="$1"
+    local ssh_opts="-i $SSH_KEY_PATH -p $HETZNER_PORT -o BatchMode=yes -o ConnectTimeout=10"
+    local ssh_target="${HETZNER_USER}@${HETZNER_HOST}"
+    
+    # Hetzner Storage Box has a restricted shell - run simple commands and process locally
+    
+    # Get backup size
+    local backup_size=$(ssh $ssh_opts "$ssh_target" "du -sh ${HETZNER_REMOTE_PATH}/${backup_name}" 2>/dev/null | cut -f1)
+    backup_size="${backup_size:-N/A}"
+    
+    # Get total used space
+    local total_used=$(ssh $ssh_opts "$ssh_target" "du -sh ${HETZNER_REMOTE_PATH}/" 2>/dev/null | cut -f1)
+    total_used="${total_used:-N/A}"
+    
+    # Get backup count
+    local backup_count=$(ssh $ssh_opts "$ssh_target" "ls -1 ${HETZNER_REMOTE_PATH}/" 2>/dev/null | grep -c "^mailcow-" || echo "0")
+    
+    # Get df info and parse locally
+    local df_output=$(ssh $ssh_opts "$ssh_target" "df -h" 2>/dev/null | tail -1)
+    local total_size=$(echo "$df_output" | awk '{print $2}')
+    local total_avail=$(echo "$df_output" | awk '{print $4}')
+    local use_percent=$(echo "$df_output" | awk '{print $5}')
+    
+    total_size="${total_size:-N/A}"
+    total_avail="${total_avail:-N/A}"
+    use_percent="${use_percent:-N/A}"
+    
+    # Return pipe-separated values
+    echo "${backup_size}|${total_used}|${total_avail}|${total_size}|${use_percent}|${backup_count}"
+}
+
+###############################################################################
 # Cleanup Old Backups
 ###############################################################################
 
@@ -696,21 +735,43 @@ main() {
     # Verify transfer
     verify_transfer
     
-    # Capture backup info before cleanup
+    # Capture backup name before cleanup
     local backup_name=$(basename "$BACKUP_DIR")
-    local backup_size=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "unknown")
     
     # Cleanup - remove all local backups (they're safely on Hetzner now)
     cleanup_old_backups
+    
+    # Gather remote storage statistics
+    local remote_stats=$(get_remote_storage_stats "$backup_name")
+    local remote_backup_size=$(echo "$remote_stats" | cut -d'|' -f1)
+    local remote_total_used=$(echo "$remote_stats" | cut -d'|' -f2)
+    local remote_total_avail=$(echo "$remote_stats" | cut -d'|' -f3)
+    local remote_total_size=$(echo "$remote_stats" | cut -d'|' -f4)
+    local remote_use_percent=$(echo "$remote_stats" | cut -d'|' -f5)
+    local remote_backup_count=$(echo "$remote_stats" | cut -d'|' -f6)
     
     log_info "========================================="
     log_info "Backup completed successfully!"
     log_info "========================================="
     
-    # Send success notification
-    send_notification "success" "Backup: $backup_name
-Size: $backup_size
-Location: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_REMOTE_PATH}/$backup_name"
+    # Send success notification with detailed statistics
+    local hostname=$(hostname -f 2>/dev/null || hostname)
+    send_notification "success" "
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  BACKUP DETAILS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Name:     $backup_name
+  Size:     $remote_backup_size
+  Host:     $hostname
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  REMOTE STORAGE (Hetzner)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Location: ${HETZNER_REMOTE_PATH}/
+  Backups:  $remote_backup_count
+  Used:     $remote_total_used of $remote_total_size ($remote_use_percent)
+  Free:     $remote_total_avail
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 # Error handler for failure notifications
