@@ -594,7 +594,7 @@ cleanup_old_backups() {
                 log_info "Removing: $backup_dir"
                 if rm -rf "${backup_dir:?}"; then
                     if [[ ! -d "$backup_dir" ]]; then
-                        ((removed_count++))
+                        ((++removed_count))  # Use pre-increment to avoid set -e issue with ((0++))
                     else
                         log_warn "Failed to fully remove: $backup_dir"
                     fi
