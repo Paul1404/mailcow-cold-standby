@@ -195,7 +195,7 @@ send_notification() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     
     if [[ "$status" == "success" ]]; then
-        subject="=?UTF-8?B?$(echo -n "✓ Mailcow Backup OK - $hostname" | base64 -w0)?="
+        subject="=?UTF-8?B?$(echo -n "Mailcow Backup OK - $hostname" | base64 -w0)?="
         body="MAILCOW BACKUP REPORT
 Generated: ${timestamp}
 Status: SUCCESS
