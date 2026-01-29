@@ -567,52 +567,33 @@ verify_transfer() {
 ###############################################################################
 
 cleanup_old_backups() {
-    local backup_dir_to_remove="$1"
     log_info "Cleaning up old backups..."
     
-    # Clean up the current backup from local temp after successful transfer
-    # SAFETY CHECKS before rm -rf:
-    # 1. Variable must not be empty
-    # 2. Must be a directory
-    # 3. Must be under TEMP_BACKUP_DIR
-    # 4. Must contain "mailcow" in the path
-    # 5. Must not be a system directory
-    if [[ -z "$backup_dir_to_remove" ]]; then
-        log_warn "No backup directory provided for cleanup"
-        return 1
+    # Change out of any backup directory before cleanup
+    cd "$TEMP_BACKUP_DIR" || cd /tmp || cd /
+    
+    # Remove ALL local backups - we only need them temporarily for transfer
+    # The backup is safely stored on Hetzner, no need to keep local copies
+    log_info "Removing all local backups (backup is safely stored on Hetzner)..."
+    
+    if [[ -d "$TEMP_BACKUP_DIR" ]]; then
+        local removed_count=0
+        for backup_dir in "$TEMP_BACKUP_DIR"/mailcow-* "$TEMP_BACKUP_DIR"/mailcow_*; do
+            if [[ -d "$backup_dir" ]]; then
+                log_info "Removing: $backup_dir"
+                if rm -rf "${backup_dir:?}"; then
+                    if [[ ! -d "$backup_dir" ]]; then
+                        ((removed_count++))
+                    else
+                        log_warn "Failed to fully remove: $backup_dir"
+                    fi
+                else
+                    log_warn "rm command failed for: $backup_dir"
+                fi
+            fi
+        done
+        log_info "Removed $removed_count local backup(s)"
     fi
-    
-    if [[ ! -d "$backup_dir_to_remove" ]]; then
-        log_warn "Backup directory doesn't exist: $backup_dir_to_remove"
-        return 1
-    fi
-    
-    # Ensure the path is under TEMP_BACKUP_DIR and contains "mailcow"
-    if [[ "$backup_dir_to_remove" != "$TEMP_BACKUP_DIR"/* ]] || [[ "$backup_dir_to_remove" != *mailcow* ]]; then
-        log_error "SAFETY CHECK FAILED: Path doesn't match expected pattern: $backup_dir_to_remove"
-        log_error "Expected path under: $TEMP_BACKUP_DIR and containing 'mailcow'"
-        return 1
-    fi
-    
-    # Prevent deletion of critical directories
-    case "$backup_dir_to_remove" in
-        /|/root|/home|/etc|/usr|/var|/boot|/sys|/proc|/dev)
-            log_error "SAFETY CHECK FAILED: Refusing to delete system directory: $backup_dir_to_remove"
-            return 1
-            ;;
-    esac
-    
-    log_info "Removing local backup after successful transfer: $backup_dir_to_remove"
-    if rm -rf "${backup_dir_to_remove:?}"; then
-        log_info "Successfully removed local backup"
-    else
-        log_warn "Failed to remove local backup: $backup_dir_to_remove"
-        return 1
-    fi
-    
-    # Clean other old local backups based on retention
-    log_info "Removing local backups older than $LOCAL_RETENTION_DAYS days..."
-    find "$TEMP_BACKUP_DIR" -maxdepth 1 -type d \( -name "mailcow-*" -o -name "mailcow_*" \) -mtime +"$LOCAL_RETENTION_DAYS" -exec rm -rf {} \; 2>/dev/null || true
     
     # Clean remote backups
     log_info "Removing remote backups older than $REMOTE_RETENTION_DAYS days..."
