@@ -425,8 +425,8 @@ perform_backup() {
     export MAILCOW_BACKUP_LOCATION="$TEMP_BACKUP_DIR"
     export THREADS="$THREADS"
     
-    # Use --delete-days 0 since we don't keep local backups (they go to Hetzner)
-    if bash helper-scripts/backup_and_restore.sh backup $BACKUP_COMPONENTS --delete-days 0; then
+    # Don't use --delete-days - we handle cleanup ourselves after successful transfer
+    if bash helper-scripts/backup_and_restore.sh backup $BACKUP_COMPONENTS; then
         log_info "Mailcow backup completed successfully"
     else
         log_error "Mailcow backup failed"
