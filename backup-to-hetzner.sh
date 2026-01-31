@@ -411,12 +411,6 @@ perform_backup() {
         docker rm -f mailcow-backup >/dev/null 2>&1 || true
     fi
     
-    # Clean up temp directory to free space
-    if [[ -d "$TEMP_BACKUP_DIR" ]]; then
-        log_info "Cleaning up old temp backups to free space..."
-        rm -rf "${TEMP_BACKUP_DIR:?}"/mailcow-* 2>/dev/null || true
-    fi
-    
     # Create temporary backup directory
     mkdir -p "$TEMP_BACKUP_DIR"
     
@@ -614,39 +608,13 @@ get_remote_storage_stats() {
 }
 
 ###############################################################################
-# Cleanup Old Backups
+# Cleanup Old Remote Backups
 ###############################################################################
 
-cleanup_old_backups() {
-    log_info "Cleaning up old backups..."
+cleanup_old_remote_backups() {
+    log_info "Checking for old remote backups to remove..."
     
-    # Change out of any backup directory before cleanup
-    cd "$TEMP_BACKUP_DIR" || cd /tmp || cd /
-    
-    # Remove ALL local backups - we only need them temporarily for transfer
-    # The backup is safely stored on Hetzner, no need to keep local copies
-    log_info "Removing all local backups (backup is safely stored on Hetzner)..."
-    
-    if [[ -d "$TEMP_BACKUP_DIR" ]]; then
-        local removed_count=0
-        for backup_dir in "$TEMP_BACKUP_DIR"/mailcow-* "$TEMP_BACKUP_DIR"/mailcow_*; do
-            if [[ -d "$backup_dir" ]]; then
-                log_info "Removing: $backup_dir"
-                if rm -rf "${backup_dir:?}"; then
-                    if [[ ! -d "$backup_dir" ]]; then
-                        ((++removed_count))  # Use pre-increment to avoid set -e issue with ((0++))
-                    else
-                        log_warn "Failed to fully remove: $backup_dir"
-                    fi
-                else
-                    log_warn "rm command failed for: $backup_dir"
-                fi
-            fi
-        done
-        log_info "Removed $removed_count local backup(s)"
-    fi
-    
-    # Clean remote backups
+    # Clean remote backups based on retention policy
     log_info "Removing remote backups older than $REMOTE_RETENTION_DAYS days..."
     
     # Calculate cutoff date in format YYYY-MM-DD
@@ -654,7 +622,6 @@ cleanup_old_backups() {
     
     if [[ -z "$cutoff_date" ]]; then
         log_warn "Could not determine cutoff date for remote cleanup"
-        log_info "Cleanup completed"
         return
     fi
     
@@ -668,7 +635,6 @@ cleanup_old_backups() {
     
     if [[ -z "$remote_dirs" ]]; then
         log_info "No remote backups found to clean"
-        log_info "Cleanup completed"
         return
     fi
     
@@ -698,8 +664,6 @@ cleanup_old_backups() {
     else
         log_info "Removed $removed_count old remote backup(s)"
     fi
-    
-    log_info "Cleanup completed"
 }
 
 ###############################################################################
@@ -720,6 +684,13 @@ main() {
     # Validate SSH connection
     test_ssh_connection
     
+    # Empty the temp backup directory - it's only used for staging before transfer
+    # This ensures we start clean and have maximum disk space available
+    if [[ -d "$TEMP_BACKUP_DIR" ]]; then
+        log_info "Emptying temp backup directory: $TEMP_BACKUP_DIR"
+        rm -rf "${TEMP_BACKUP_DIR:?}"/* 2>/dev/null || true
+    fi
+    
     # Check disk space
     check_disk_space
     
@@ -735,11 +706,15 @@ main() {
     # Verify transfer
     verify_transfer
     
-    # Capture backup name before cleanup
+    # Capture backup name for reporting
     local backup_name=$(basename "$BACKUP_DIR")
     
-    # Cleanup - remove all local backups (they're safely on Hetzner now)
-    cleanup_old_backups
+    # Empty temp directory now that backup is safely on Hetzner
+    log_info "Cleaning up local temp directory..."
+    rm -rf "${TEMP_BACKUP_DIR:?}"/* 2>/dev/null || true
+    
+    # Cleanup old remote backups based on retention policy
+    cleanup_old_remote_backups
     
     # Gather remote storage statistics
     log_info "Gathering remote storage statistics..."
