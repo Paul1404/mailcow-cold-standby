@@ -651,7 +651,7 @@ cleanup_old_remote_backups() {
                        -p "$HETZNER_PORT" \
                        "${HETZNER_USER}@${HETZNER_HOST}" \
                        "rm -rf ${HETZNER_REMOTE_PATH}/${backup_dir}" 2>/dev/null; then
-                    ((removed_count++))
+                    removed_count=$((removed_count + 1))
                 else
                     log_warn "Failed to remove $backup_dir"
                 fi
@@ -706,7 +706,7 @@ cleanup_old_remote_backups() {
                -p "$HETZNER_PORT" \
                "${HETZNER_USER}@${HETZNER_HOST}" \
                "rm -rf ${HETZNER_REMOTE_PATH}/${dir_to_remove}" 2>/dev/null; then
-            ((dedup_count++))
+            dedup_count=$((dedup_count + 1))
         else
             log_warn "Failed to remove duplicate $dir_to_remove"
         fi
