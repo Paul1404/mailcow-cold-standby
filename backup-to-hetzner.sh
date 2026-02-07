@@ -614,10 +614,23 @@ get_remote_storage_stats() {
 cleanup_old_remote_backups() {
     log_info "Checking for old remote backups to remove..."
     
-    # Clean remote backups based on retention policy
+    # List remote directories (sorted chronologically by name)
+    local remote_dirs=$(ssh -i "$SSH_KEY_PATH" \
+        -p "$HETZNER_PORT" \
+        "${HETZNER_USER}@${HETZNER_HOST}" \
+        "ls -1 ${HETZNER_REMOTE_PATH}" 2>/dev/null | grep "^mailcow-" | sort || true)
+    
+    if [[ -z "$remote_dirs" ]]; then
+        log_info "No remote backups found"
+        return
+    fi
+    
+    local total_backups=$(echo "$remote_dirs" | wc -l)
+    log_info "Found $total_backups remote backup(s)"
+    
+    # --- Phase 1: Remove backups older than retention period ---
     log_info "Removing remote backups older than $REMOTE_RETENTION_DAYS days..."
     
-    # Calculate cutoff date in format YYYY-MM-DD
     local cutoff_date=$(date -d "$REMOTE_RETENTION_DAYS days ago" +%Y-%m-%d 2>/dev/null || date -v-${REMOTE_RETENTION_DAYS}d +%Y-%m-%d 2>/dev/null)
     
     if [[ -z "$cutoff_date" ]]; then
@@ -625,28 +638,15 @@ cleanup_old_remote_backups() {
         return
     fi
     
-    log_info "Cutoff date: $cutoff_date (removing backups older than this)"
-    
-    # List remote directories and process locally
-    local remote_dirs=$(ssh -i "$SSH_KEY_PATH" \
-        -p "$HETZNER_PORT" \
-        "${HETZNER_USER}@${HETZNER_HOST}" \
-        "ls -1 ${HETZNER_REMOTE_PATH}" 2>/dev/null | grep "^mailcow-" || true)
-    
-    if [[ -z "$remote_dirs" ]]; then
-        log_info "No remote backups found to clean"
-        return
-    fi
+    log_info "Cutoff date: $cutoff_date (removing backups before this date)"
     
     local removed_count=0
     while IFS= read -r backup_dir; do
-        # Extract date from directory name (mailcow-YYYY-MM-DD-HH-MM-SS)
         if [[ "$backup_dir" =~ mailcow-([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
             local backup_date="${BASH_REMATCH[1]}"
             
-            # Compare dates (lexicographically works for YYYY-MM-DD format)
             if [[ "$backup_date" < "$cutoff_date" ]]; then
-                log_info "Removing old remote backup: $backup_dir (date: $backup_date)"
+                log_info "Removing expired remote backup: $backup_dir (date: $backup_date)"
                 if ssh -i "$SSH_KEY_PATH" \
                        -p "$HETZNER_PORT" \
                        "${HETZNER_USER}@${HETZNER_HOST}" \
@@ -659,10 +659,63 @@ cleanup_old_remote_backups() {
         fi
     done <<< "$remote_dirs"
     
-    if [[ $removed_count -eq 0 ]]; then
-        log_info "No old remote backups to remove"
+    if [[ $removed_count -gt 0 ]]; then
+        log_info "Removed $removed_count expired remote backup(s)"
     else
-        log_info "Removed $removed_count old remote backup(s)"
+        log_info "No expired remote backups to remove"
+    fi
+    
+    # --- Phase 2: Keep only one backup per day (latest), remove duplicates ---
+    log_info "Checking for duplicate backups (keeping latest per day)..."
+    
+    # Re-list after retention cleanup
+    remote_dirs=$(ssh -i "$SSH_KEY_PATH" \
+        -p "$HETZNER_PORT" \
+        "${HETZNER_USER}@${HETZNER_HOST}" \
+        "ls -1 ${HETZNER_REMOTE_PATH}" 2>/dev/null | grep "^mailcow-" | sort || true)
+    
+    if [[ -z "$remote_dirs" ]]; then
+        return
+    fi
+    
+    local prev_date=""
+    local prev_dir=""
+    local dedup_count=0
+    local dirs_to_remove=()
+    
+    # Collect all directories grouped by date; since they're sorted, the last
+    # entry for each date is the latest backup of that day
+    while IFS= read -r backup_dir; do
+        if [[ "$backup_dir" =~ mailcow-([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+            local this_date="${BASH_REMATCH[1]}"
+            
+            if [[ "$this_date" == "$prev_date" ]] && [[ -n "$prev_dir" ]]; then
+                # Same date as previous - mark the OLDER (previous) one for removal
+                dirs_to_remove+=("$prev_dir")
+            fi
+            
+            prev_date="$this_date"
+            prev_dir="$backup_dir"
+        fi
+    done <<< "$remote_dirs"
+    
+    for dir_to_remove in "${dirs_to_remove[@]+${dirs_to_remove[@]}}"; do
+        [[ -z "$dir_to_remove" ]] && continue
+        log_info "Removing duplicate backup: $dir_to_remove"
+        if ssh -i "$SSH_KEY_PATH" \
+               -p "$HETZNER_PORT" \
+               "${HETZNER_USER}@${HETZNER_HOST}" \
+               "rm -rf ${HETZNER_REMOTE_PATH}/${dir_to_remove}" 2>/dev/null; then
+            ((dedup_count++))
+        else
+            log_warn "Failed to remove duplicate $dir_to_remove"
+        fi
+    done
+    
+    if [[ $dedup_count -gt 0 ]]; then
+        log_info "Removed $dedup_count duplicate remote backup(s)"
+    else
+        log_info "No duplicate backups found"
     fi
 }
 
@@ -684,12 +737,13 @@ main() {
     # Validate SSH connection
     test_ssh_connection
     
-    # Empty the temp backup directory - it's only used for staging before transfer
-    # This ensures we start clean and have maximum disk space available
+    # Remove and recreate temp backup directory - ensures clean slate and maximum disk space
     if [[ -d "$TEMP_BACKUP_DIR" ]]; then
-        log_info "Emptying temp backup directory: $TEMP_BACKUP_DIR"
-        rm -rf "${TEMP_BACKUP_DIR:?}"/* 2>/dev/null || true
+        log_info "Removing temp backup directory: $TEMP_BACKUP_DIR"
+        rm -rf "${TEMP_BACKUP_DIR:?}"
     fi
+    mkdir -p "$TEMP_BACKUP_DIR"
+    log_info "Temp backup directory ready: $TEMP_BACKUP_DIR"
     
     # Check disk space
     check_disk_space
@@ -709,9 +763,17 @@ main() {
     # Capture backup name for reporting
     local backup_name=$(basename "$BACKUP_DIR")
     
-    # Empty temp directory now that backup is safely on Hetzner
-    log_info "Cleaning up local temp directory..."
-    rm -rf "${TEMP_BACKUP_DIR:?}"/* 2>/dev/null || true
+    # Remove local backup now that it is safely on Hetzner
+    if [[ -d "$TEMP_BACKUP_DIR" ]]; then
+        log_info "Removing local temp directory: $TEMP_BACKUP_DIR"
+        rm -rf "${TEMP_BACKUP_DIR:?}"
+        if [[ -d "$TEMP_BACKUP_DIR" ]]; then
+            log_warn "Failed to remove temp directory: $TEMP_BACKUP_DIR"
+            log_warn "Contents: $(ls -la "$TEMP_BACKUP_DIR" 2>&1)"
+        else
+            log_info "Local cleanup successful"
+        fi
+    fi
     
     # Cleanup old remote backups based on retention policy
     cleanup_old_remote_backups
