@@ -175,7 +175,8 @@ load_config() {
 
 send_notification() {
     local status="$1"  # "success" or "failure"
-    local message="$2"
+    # For success: args are backup_name, size, hostname, location, count, used, total, percent, free
+    # For failure: $2 is error message
     
     # Skip if notifications disabled (accept true, yes, 1)
     local notifications_enabled="${EMAIL_NOTIFICATIONS:-false}"
@@ -188,58 +189,190 @@ send_notification() {
         return 1
     fi
     
-    local subject
-    local body
     local hostname=$(hostname -f 2>/dev/null || hostname)
     local from_addr="${NOTIFICATION_FROM:-mailcow-backup@${hostname}}"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local subject
+    local html_body
     
     if [[ "$status" == "success" ]]; then
+        local backup_name="$2"
+        local backup_size="$3"
+        local bk_hostname="$4"
+        local location="$5"
+        local count="$6"
+        local used="$7"
+        local total="$8"
+        local percent="$9"
+        local free="${10}"
+        
         subject="=?UTF-8?B?$(echo -n "Mailcow Backup OK - $hostname" | base64 -w0)?="
-        body="MAILCOW BACKUP REPORT
-Generated: ${timestamp}
-Status: SUCCESS
-${message}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Log: ${LOG_FILE}
-Docs: https://github.com/Paul1404/mailcow-cold-standby"
+        
+        html_body='<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:24px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#22c55e;padding:24px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="color:#ffffff;font-size:22px;font-weight:700;">&#x2713; Backup Successful</td>
+                <td align="right" style="color:rgba(255,255,255,0.85);font-size:13px;">'"$timestamp"'</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Backup Details -->
+        <tr>
+          <td style="padding:28px 32px 0;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f0fdf4;border-radius:6px;border:1px solid #bbf7d0;">
+              <tr><td style="padding:16px 20px 8px;color:#166534;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Backup Details</td></tr>
+              <tr><td style="padding:0 20px 16px;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#1e293b;">
+                  <tr><td style="padding:6px 0;color:#64748b;width:100px;">Name</td><td style="padding:6px 0;font-weight:600;font-family:monospace;">'"$backup_name"'</td></tr>
+                  <tr><td style="padding:6px 0;color:#64748b;">Size</td><td style="padding:6px 0;font-weight:600;">'"$backup_size"'</td></tr>
+                  <tr><td style="padding:6px 0;color:#64748b;">Host</td><td style="padding:6px 0;">'"$bk_hostname"'</td></tr>
+                </table>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Storage Stats -->
+        <tr>
+          <td style="padding:16px 32px 0;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+              <tr><td style="padding:16px 20px 8px;color:#475569;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Remote Storage (Hetzner)</td></tr>
+              <tr><td style="padding:0 20px 6px;">
+                <!-- Storage bar -->
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr><td style="background-color:#e2e8f0;border-radius:4px;height:8px;padding:0;">
+                    <div style="background-color:#3b82f6;height:8px;border-radius:4px;width:'"$percent"';min-width:2%;max-width:100%;"></div>
+                  </td></tr>
+                </table>
+              </td></tr>
+              <tr><td style="padding:0 20px 16px;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;color:#1e293b;">
+                  <tr><td style="padding:6px 0;color:#64748b;width:100px;">Location</td><td style="padding:6px 0;font-family:monospace;">'"$location"'</td></tr>
+                  <tr><td style="padding:6px 0;color:#64748b;">Backups</td><td style="padding:6px 0;font-weight:600;">'"$count"'</td></tr>
+                  <tr><td style="padding:6px 0;color:#64748b;">Used</td><td style="padding:6px 0;">'"$used"' of '"$total"' ('"$percent"')</td></tr>
+                  <tr><td style="padding:6px 0;color:#64748b;">Free</td><td style="padding:6px 0;">'"$free"'</td></tr>
+                </table>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:24px 32px;border-top:1px solid #e2e8f0;margin-top:16px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="color:#94a3b8;font-size:12px;">Log: '"${LOG_FILE}"'</td>
+                <td align="right"><a href="https://github.com/Paul1404/mailcow-cold-standby" style="color:#3b82f6;font-size:12px;text-decoration:none;">Documentation</a></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>'
     else
+        local error_message="$2"
+        
         subject="=?UTF-8?B?$(echo -n "✗ Mailcow Backup FAILED - $hostname" | base64 -w0)?="
-        body="MAILCOW BACKUP REPORT
-Generated: ${timestamp}
-Status: FAILED
+        
+        # Escape HTML characters in error message
+        local safe_message=$(echo "$error_message" | sed 's/&/\&amp;/g;s/</\&lt;/g;s/>/\&gt;/g;s/"/\&quot;/g')
+        
+        html_body='<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:24px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ERROR DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${message}
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#ef4444;padding:24px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="color:#ffffff;font-size:22px;font-weight:700;">&#x2717; Backup Failed</td>
+                <td align="right" style="color:rgba(255,255,255,0.85);font-size:13px;">'"$timestamp"'</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Please check the log file: ${LOG_FILE}
+        <!-- Error Details -->
+        <tr>
+          <td style="padding:28px 32px 0;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#fef2f2;border-radius:6px;border:1px solid #fecaca;">
+              <tr><td style="padding:16px 20px 8px;color:#991b1b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Error Details</td></tr>
+              <tr><td style="padding:0 20px 16px;">
+                <p style="margin:0;font-size:14px;color:#1e293b;line-height:1.6;">'"$safe_message"'</p>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
 
-Docs: https://github.com/Paul1404/mailcow-cold-standby"
+        <!-- Action Required -->
+        <tr>
+          <td style="padding:16px 32px 0;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:6px;border:1px solid #e2e8f0;">
+              <tr><td style="padding:16px 20px;font-size:14px;color:#475569;">
+                <strong>Action Required:</strong> Check the log file for detailed error information.<br>
+                <code style="background:#e2e8f0;padding:2px 6px;border-radius:3px;font-size:13px;">cat '"${LOG_FILE}"'</code>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:24px 32px;border-top:1px solid #e2e8f0;margin-top:16px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="color:#94a3b8;font-size:12px;">Host: '"$hostname"'</td>
+                <td align="right"><a href="https://github.com/Paul1404/mailcow-cold-standby" style="color:#3b82f6;font-size:12px;text-decoration:none;">Documentation</a></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>'
     fi
     
     # Primary method: Use docker exec to send via postfix container (most reliable)
-    # This works because we're running on the mailcow host
-    # Container name varies: postfix-mailcow or mailcowdockerized-postfix-mailcow-1
     local postfix_container=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'postfix-mailcow' | head -1)
     
     if [[ -n "$postfix_container" ]]; then
         log_info "Sending email notification via $postfix_container container..."
         
-        # Construct the email with proper headers
         local email_content="From: ${from_addr}
 To: ${NOTIFICATION_EMAIL}
 Subject: ${subject}
 Date: $(date -R)
 MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
+Content-Type: text/html; charset=UTF-8
 X-Mailer: mailcow-cold-standby
 
-${body}"
+${html_body}"
         
-        # Send via postfix's sendmail in the container
         if echo "$email_content" | docker exec -i "$postfix_container" sendmail -t -oi 2>/dev/null; then
             log_info "Email notification sent to $NOTIFICATION_EMAIL via postfix container"
             return 0
@@ -268,9 +401,9 @@ ${body}"
             echo "Subject: ${subject}"
             echo "Date: $(date -R)"
             echo "MIME-Version: 1.0"
-            echo "Content-Type: text/plain; charset=UTF-8"
+            echo "Content-Type: text/html; charset=UTF-8"
             echo ""
-            echo "${body}"
+            echo "${html_body}"
             echo "."
             sleep 0.3
             echo "QUIT"
@@ -751,6 +884,11 @@ main() {
     # Perform backup
     perform_backup
     
+    # Capture backup size while files still exist locally
+    BACKUP_SIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
+    BACKUP_SIZE="${BACKUP_SIZE:-unknown}"
+    log_info "Backup size: $BACKUP_SIZE"
+    
     # Generate checksums
     generate_checksums
     
@@ -794,22 +932,16 @@ main() {
     
     # Send success notification with detailed statistics
     local hostname=$(hostname -f 2>/dev/null || hostname)
-    send_notification "success" "
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  BACKUP DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Name:     $backup_name
-  Size:     $remote_backup_size
-  Host:     $hostname
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  REMOTE STORAGE (Hetzner)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Location: ${HETZNER_REMOTE_PATH}/
-  Backups:  $remote_backup_count
-  Used:     $remote_total_used of $remote_total_size ($remote_use_percent)
-  Free:     $remote_total_avail
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    send_notification "success" \
+        "$backup_name" \
+        "$BACKUP_SIZE" \
+        "$hostname" \
+        "${HETZNER_REMOTE_PATH}/" \
+        "$remote_backup_count" \
+        "$remote_total_used" \
+        "$remote_total_size" \
+        "$remote_use_percent" \
+        "$remote_total_avail"
 }
 
 # Error handler for failure notifications
