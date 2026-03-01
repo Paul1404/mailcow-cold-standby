@@ -565,11 +565,21 @@ perform_backup() {
     export MAILCOW_BACKUP_LOCATION="$TEMP_BACKUP_DIR"
     export THREADS="$THREADS"
     
+    # Capture output for logging on failure (mailcow script doesn't always exit cleanly)
+    local backup_output
+    backup_output=$(mktemp)
+    
     # Don't use --delete-days - we handle cleanup ourselves after successful transfer
-    if bash helper-scripts/backup_and_restore.sh backup $BACKUP_COMPONENTS; then
+    if bash helper-scripts/backup_and_restore.sh backup $BACKUP_COMPONENTS >"$backup_output" 2>&1; then
         log_info "Mailcow backup completed successfully"
+        rm -f "$backup_output"
     else
         log_error "Mailcow backup failed"
+        log_error "Last 50 lines of backup output:"
+        tail -50 "$backup_output" 2>/dev/null | while IFS= read -r line; do
+            log "ERROR" "  $line"
+        done
+        rm -f "$backup_output"
         exit 1
     fi
     
