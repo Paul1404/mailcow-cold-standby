@@ -105,6 +105,15 @@ acquire_lock() {
         else
             log_warn "Process $lock_pid no longer exists. Removing stale lock..."
             rm -f "$LOCK_FILE"
+            # Aggressive cleanup: previous run left incomplete state - remove any leftovers
+            log_info "Cleaning up leftover state from failed/crashed previous run..."
+            docker rm -f mailcow-backup 2>/dev/null || true
+            for stale_tmp in /var/lib/mailcow-backup/tmp /tmp/mailcow-backup; do
+                if [[ -d "$stale_tmp" ]]; then
+                    log_info "Removing stale temp directory: $stale_tmp"
+                    rm -rf "${stale_tmp:?}"
+                fi
+            done
         fi
     fi
     
@@ -575,10 +584,25 @@ perform_backup() {
         rm -f "$backup_output"
     else
         log_error "Mailcow backup failed"
-        log_error "Last 50 lines of backup output:"
-        tail -50 "$backup_output" 2>/dev/null | while IFS= read -r line; do
+        # Show startup (first 15 lines) - may contain image pull errors, permission errors
+        log_error "First 15 lines of backup output:"
+        head -15 "$backup_output" 2>/dev/null | while IFS= read -r line; do
             log "ERROR" "  $line"
         done
+        # Show any lines that look like errors, or last 30 lines if none found
+        local error_lines
+        error_lines=$(grep -iE '(error|failed|fatal|cannot|denied|no space|killed)' "$backup_output" 2>/dev/null | head -20)
+        if [[ -n "$error_lines" ]]; then
+            log_error "Error-related lines from backup output:"
+            echo "$error_lines" | while IFS= read -r line; do
+                log "ERROR" "  $line"
+            done
+        else
+            log_error "Last 30 lines of backup output:"
+            tail -30 "$backup_output" 2>/dev/null | while IFS= read -r line; do
+                log "ERROR" "  $line"
+            done
+        fi
         rm -f "$backup_output"
         exit 1
     fi
