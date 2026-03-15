@@ -547,6 +547,15 @@ check_disk_space() {
 perform_backup() {
     log_info "Starting mailcow backup process..."
     
+    # Pre-pull the mailcow backup image so the mailcow script won't pull during backup.
+    # Pulling during backup has caused failures (image pull + backup start race/conflict).
+    log_info "Ensuring mailcow backup image is up to date..."
+    if docker pull ghcr.io/mailcow/backup:latest; then
+        log_info "Backup image ready"
+    else
+        log_warn "Image pull failed, will use cached image if available"
+    fi
+    
     # Clean up any leftover backup containers from previous runs
     if docker ps -a --format '{{.Names}}' | grep -q '^mailcow-backup$'; then
         log_info "Removing leftover mailcow-backup container..."
