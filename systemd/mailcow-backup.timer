@@ -7,8 +7,11 @@ Requires=mailcow-backup.service
 # Run daily at 3:00 AM
 OnCalendar=*-*-* 03:00:00
 
-# Run immediately if system was off during scheduled time
-Persistent=true
+# Do NOT run a catch-up backup if the scheduled time was missed. A host that
+# reboots shortly after the scheduled time (e.g. weekly kernel-update reboots)
+# would otherwise trigger a second "catch-up" backup on top of the scheduled
+# one. The script also enforces a once-per-day guard as a second safeguard.
+Persistent=false
 
 # Add random delay to prevent exact-time load spikes
 RandomizedDelaySec=15min

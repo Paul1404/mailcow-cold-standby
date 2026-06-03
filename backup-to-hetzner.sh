@@ -17,6 +17,18 @@ set -euo pipefail
 CONFIG_FILE="/etc/mailcow-backup/.env"
 LOCK_FILE="/var/lock/mailcow-backup.lock"
 
+# State directory and per-day stamp (used to prevent more than one run per day)
+STATE_DIR="/var/lib/mailcow-backup"
+LAST_SUCCESS_STAMP="${STATE_DIR}/last-success-date"
+
+# --force bypasses the once-per-day guard (for manual/ad-hoc runs)
+FORCE=false
+for arg in "$@"; do
+    case "$arg" in
+        --force|-f) FORCE=true ;;
+    esac
+done
+
 # Detect if running interactively or from systemd
 if [[ -t 1 ]]; then
     INTERACTIVE=true
@@ -171,6 +183,12 @@ load_config() {
     BACKUP_COMPONENTS="${BACKUP_COMPONENTS:-all}"
     THREADS="${THREADS:-4}"
     REMOTE_RETENTION_DAYS="${REMOTE_RETENTION_DAYS:-30}"
+    # GFS (grandfather-father-son) retention tiers for remote backups.
+    # Keep the most recent N daily, weekly (latest per ISO week) and
+    # monthly (latest per month) backups; everything else is pruned.
+    GFS_DAILY="${GFS_DAILY:-7}"
+    GFS_WEEKLY="${GFS_WEEKLY:-4}"
+    GFS_MONTHLY="${GFS_MONTHLY:-3}"
     LOCK_TIMEOUT_HOURS="${LOCK_TIMEOUT_HOURS:-24}"
     LOG_FILE="${LOG_FILE:-/var/log/mailcow-backup.log}"
     TEMP_BACKUP_DIR="${TEMP_BACKUP_DIR:-/tmp/mailcow-backup}"
@@ -788,110 +806,103 @@ get_remote_storage_stats() {
 ###############################################################################
 
 cleanup_old_remote_backups() {
-    log_info "Checking for old remote backups to remove..."
-    
-    # List remote directories (sorted chronologically by name)
+    log_info "Applying GFS retention (daily=$GFS_DAILY, weekly=$GFS_WEEKLY, monthly=$GFS_MONTHLY)..."
+
+    # List remote directories (sorted chronologically by name; names embed the
+    # timestamp YYYY-MM-DD-HH-MM-SS so lexical sort == chronological sort)
     local remote_dirs=$(ssh -i "$SSH_KEY_PATH" \
         -p "$HETZNER_PORT" \
         "${HETZNER_USER}@${HETZNER_HOST}" \
         "ls -1 ${HETZNER_REMOTE_PATH}" 2>/dev/null | grep "^mailcow-" | sort || true)
-    
+
     if [[ -z "$remote_dirs" ]]; then
         log_info "No remote backups found"
         return
     fi
-    
+
     local total_backups=$(echo "$remote_dirs" | wc -l)
     log_info "Found $total_backups remote backup(s)"
-    
-    # --- Phase 1: Remove backups older than retention period ---
-    log_info "Removing remote backups older than $REMOTE_RETENTION_DAYS days..."
-    
-    local cutoff_date=$(date -d "$REMOTE_RETENTION_DAYS days ago" +%Y-%m-%d 2>/dev/null || date -v-${REMOTE_RETENTION_DAYS}d +%Y-%m-%d 2>/dev/null)
-    
-    if [[ -z "$cutoff_date" ]]; then
-        log_warn "Could not determine cutoff date for remote cleanup"
-        return
+
+    # --- Step 1: collapse to the latest backup per day ---------------------
+    # latest_for_day[YYYY-MM-DD] = newest backup dir for that day. Because the
+    # input is sorted ascending, the last write for a given day wins. Any older
+    # same-day backup is therefore never selected below and gets pruned (this
+    # also removes the duplicate produced by a double daily run).
+    declare -A latest_for_day=()
+    while IFS= read -r backup_dir; do
+        if [[ "$backup_dir" =~ mailcow-([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
+            latest_for_day["${BASH_REMATCH[1]}"]="$backup_dir"
+        fi
+    done <<< "$remote_dirs"
+
+    # --- Step 2: build the keep-set across the three GFS tiers -------------
+    declare -A keep=()
+    local day count
+
+    # Daily tier: the GFS_DAILY most recent days
+    count=0
+    for day in $(printf '%s\n' "${!latest_for_day[@]}" | sort -r); do
+        if (( count < GFS_DAILY )); then keep["${latest_for_day[$day]}"]=1; fi
+        count=$((count + 1))
+    done
+
+    # Weekly tier: latest backup per ISO week, GFS_WEEKLY most recent weeks
+    declare -A latest_for_week=()
+    for day in $(printf '%s\n' "${!latest_for_day[@]}" | sort); do
+        local wk
+        wk=$(date -d "$day" +%G-%V 2>/dev/null) || continue
+        latest_for_week["$wk"]="${latest_for_day[$day]}"
+    done
+    count=0
+    local wk
+    for wk in $(printf '%s\n' "${!latest_for_week[@]}" | sort -r); do
+        if (( count < GFS_WEEKLY )); then keep["${latest_for_week[$wk]}"]=1; fi
+        count=$((count + 1))
+    done
+
+    # Monthly tier: latest backup per month, GFS_MONTHLY most recent months
+    declare -A latest_for_month=()
+    for day in $(printf '%s\n' "${!latest_for_day[@]}" | sort); do
+        latest_for_month["${day:0:7}"]="${latest_for_day[$day]}"
+    done
+    count=0
+    local mo
+    for mo in $(printf '%s\n' "${!latest_for_month[@]}" | sort -r); do
+        if (( count < GFS_MONTHLY )); then keep["${latest_for_month[$mo]}"]=1; fi
+        count=$((count + 1))
+    done
+
+    # Safety net: never prune the backup just transferred this run
+    if [[ -n "${BACKUP_DIR:-}" ]]; then
+        keep["$(basename "$BACKUP_DIR")"]=1
     fi
-    
-    log_info "Cutoff date: $cutoff_date (removing backups before this date)"
-    
+
+    log_info "Retention keep-set: ${#keep[@]} backup(s) across daily/weekly/monthly tiers"
+
+    # --- Step 3: prune everything not in the keep-set ---------------------
     local removed_count=0
     while IFS= read -r backup_dir; do
-        if [[ "$backup_dir" =~ mailcow-([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
-            local backup_date="${BASH_REMATCH[1]}"
-            
-            if [[ "$backup_date" < "$cutoff_date" ]]; then
-                log_info "Removing expired remote backup: $backup_dir (date: $backup_date)"
-                if ssh -i "$SSH_KEY_PATH" \
-                       -p "$HETZNER_PORT" \
-                       "${HETZNER_USER}@${HETZNER_HOST}" \
-                       "rm -rf ${HETZNER_REMOTE_PATH}/${backup_dir}" 2>/dev/null; then
-                    removed_count=$((removed_count + 1))
-                else
-                    log_warn "Failed to remove $backup_dir"
-                fi
-            fi
+        [[ -z "$backup_dir" ]] && continue
+        if [[ -n "${keep[$backup_dir]:-}" ]]; then
+            continue
         fi
-    done <<< "$remote_dirs"
-    
-    if [[ $removed_count -gt 0 ]]; then
-        log_info "Removed $removed_count expired remote backup(s)"
-    else
-        log_info "No expired remote backups to remove"
-    fi
-    
-    # --- Phase 2: Keep only one backup per day (latest), remove duplicates ---
-    log_info "Checking for duplicate backups (keeping latest per day)..."
-    
-    # Re-list after retention cleanup
-    remote_dirs=$(ssh -i "$SSH_KEY_PATH" \
-        -p "$HETZNER_PORT" \
-        "${HETZNER_USER}@${HETZNER_HOST}" \
-        "ls -1 ${HETZNER_REMOTE_PATH}" 2>/dev/null | grep "^mailcow-" | sort || true)
-    
-    if [[ -z "$remote_dirs" ]]; then
-        return
-    fi
-    
-    local prev_date=""
-    local prev_dir=""
-    local dedup_count=0
-    local dirs_to_remove=()
-    
-    # Collect all directories grouped by date; since they're sorted, the last
-    # entry for each date is the latest backup of that day
-    while IFS= read -r backup_dir; do
-        if [[ "$backup_dir" =~ mailcow-([0-9]{4}-[0-9]{2}-[0-9]{2}) ]]; then
-            local this_date="${BASH_REMATCH[1]}"
-            
-            if [[ "$this_date" == "$prev_date" ]] && [[ -n "$prev_dir" ]]; then
-                # Same date as previous - mark the OLDER (previous) one for removal
-                dirs_to_remove+=("$prev_dir")
-            fi
-            
-            prev_date="$this_date"
-            prev_dir="$backup_dir"
-        fi
-    done <<< "$remote_dirs"
-    
-    for dir_to_remove in "${dirs_to_remove[@]+${dirs_to_remove[@]}}"; do
-        [[ -z "$dir_to_remove" ]] && continue
-        log_info "Removing duplicate backup: $dir_to_remove"
-        if ssh -i "$SSH_KEY_PATH" \
+        log_info "Pruning remote backup (outside retention): $backup_dir"
+        # -n: do NOT read stdin, else ssh swallows the rest of the while-read
+        # here-string and the loop stops after the first deletion.
+        if ssh -n -i "$SSH_KEY_PATH" \
                -p "$HETZNER_PORT" \
                "${HETZNER_USER}@${HETZNER_HOST}" \
-               "rm -rf ${HETZNER_REMOTE_PATH}/${dir_to_remove}" 2>/dev/null; then
-            dedup_count=$((dedup_count + 1))
+               "rm -rf ${HETZNER_REMOTE_PATH}/${backup_dir}" 2>/dev/null; then
+            removed_count=$((removed_count + 1))
         else
-            log_warn "Failed to remove duplicate $dir_to_remove"
+            log_warn "Failed to remove $backup_dir"
         fi
-    done
-    
-    if [[ $dedup_count -gt 0 ]]; then
-        log_info "Removed $dedup_count duplicate remote backup(s)"
+    done <<< "$remote_dirs"
+
+    if [[ $removed_count -gt 0 ]]; then
+        log_info "Pruned $removed_count remote backup(s); ${#keep[@]} retained"
     else
-        log_info "No duplicate backups found"
+        log_info "No remote backups to prune; ${#keep[@]} retained"
     fi
 }
 
@@ -906,10 +917,20 @@ main() {
     
     # Acquire lock
     acquire_lock
-    
+
     # Load configuration
     load_config
-    
+
+    # Once-per-day guard: refuse a second run on the same calendar day unless
+    # forced. The lock file only blocks *concurrent* runs; this blocks a second
+    # sequential run (e.g. a systemd Persistent= catch-up after a reboot).
+    local today
+    today=$(date +%Y-%m-%d)
+    if [[ "$FORCE" != true ]] && [[ -f "$LAST_SUCCESS_STAMP" ]] && [[ "$(cat "$LAST_SUCCESS_STAMP" 2>/dev/null)" == "$today" ]]; then
+        log_info "A successful backup already ran today ($today). Skipping. Use --force to override."
+        exit 0
+    fi
+
     # Validate SSH connection
     test_ssh_connection
     
@@ -972,7 +993,11 @@ main() {
     log_info "========================================="
     log_info "Backup completed successfully!"
     log_info "========================================="
-    
+
+    # Record today's date so the once-per-day guard can block a later re-run
+    mkdir -p "$STATE_DIR"
+    date +%Y-%m-%d > "$LAST_SUCCESS_STAMP"
+
     # Send success notification with detailed statistics
     local hostname=$(hostname -f 2>/dev/null || hostname)
     send_notification "success" \

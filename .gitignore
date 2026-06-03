@@ -21,6 +21,9 @@ id_rsa*
 *.swo
 *~
 
+# Local pre-edit backups
+*.bak-*
+
 # OS files
 .DS_Store
 Thumbs.db
